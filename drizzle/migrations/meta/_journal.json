@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1770795588794,
+      "tag": "0000_mute_maggott",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1771832040810,
+      "tag": "0001_free_miracleman",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1772596632796,
+      "tag": "0002_glossy_prowler",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1772691973933,
+      "tag": "0003_flat_squadron_supreme",
+      "breakpoints": true
+    }
+  ]
+}
