@@ -26,6 +26,10 @@ type Permission =
   | "EDIT_ATTENDANCE"
   | "VIEW_LEADS"
   | "VIEW_BILLING"
+  | "VIEW_PORTFOLIO"
+  | "CREATE_PORTFOLIO"
+  | "EDIT_PORTFOLIO"
+  | "DELETE_PORTFOLIO"
   | "ALL";
 
 const ROLE_PERMISSIONS: Record<string, Permission[]> = {
@@ -52,6 +56,10 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "DELETE_USER",
     "MANAGE_PROJECT_VIEWERS",
     "VIEW_LEADS",
+    "VIEW_PORTFOLIO",
+    "CREATE_PORTFOLIO", // ✅ NEW — can add portfolio items
+    "EDIT_PORTFOLIO", // ✅ NEW — can edit portfolio items + add to favorites
+    "DELETE_PORTFOLIO", // ✅ NEW — can delete portfolio items
   ],
   TEAM_LEADER: [
     "VIEW_DASHBOARD",
@@ -177,4 +185,22 @@ export function canViewLeads(role: string, team_type?: string | null): boolean {
 
 export function canManageLeads(role: string): boolean {
   return role === "ADMIN" || role === "PROJECT_MANAGER";
+}
+
+// ── Portfolio helpers ─────────────────────────────────────────────────────────
+
+export function canViewPortfolio(role: string): boolean {
+  return hasPermission(role, "VIEW_PORTFOLIO");
+}
+
+export function canCreatePortfolio(role: string): boolean {
+  return hasPermission(role, "CREATE_PORTFOLIO");
+}
+
+export function canEditPortfolio(role: string): boolean {
+  return hasPermission(role, "EDIT_PORTFOLIO");
+}
+
+export function canDeletePortfolio(role: string): boolean {
+  return hasPermission(role, "DELETE_PORTFOLIO");
 }

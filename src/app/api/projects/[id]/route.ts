@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { projects, tasks, taskNotes } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -8,6 +8,10 @@ import { canCreateProject } from "@/lib/projects/permissions";
 import { z } from "zod";
 import { v2 as cloudinary } from "cloudinary";
 import { deleteFilesFromStorage } from "@/lib/server-storage";
+import {
+  logLeadActivityForProject,
+  createFeedbackAttemptsForProject,
+} from "@/lib/leads/lead-project-service";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -16,7 +20,8 @@ cloudinary.config({
   secure: true,
 });
 
-// ─── Helper: collect all files with storage info from a stored files JSON string ───────────
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
 interface StoredFile {
   public_id?: string;
   resource_type?: string;
@@ -98,22 +103,19 @@ export async function PATCH(
       );
     }
 
-    // Verify ownership for PROJECT_MANAGER
+    // Fetch existing to check current status (needed for completion transition)
     const existing = await db
-      .select({ id: projects.id, created_by: projects.created_by })
+      .select({
+        id: projects.id,
+        created_by: projects.created_by,
+        status: projects.status,
+      })
       .from(projects)
       .where(eq(projects.id, id))
       .then((r) => r[0]);
 
     if (!existing)
       return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    // if (
-    //   session.user.role === "PROJECT_MANAGER" &&
-    //   existing.created_by !== session.user.id
-    // ) {
-    //   return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    // }
 
     // Build update payload — only include provided keys
     const data = parsed.data;
@@ -123,6 +125,42 @@ export async function PATCH(
     }
 
     await db.update(projects).set(updatePayload).where(eq(projects.id, id));
+
+    // ── Lead lifecycle hook: fire on ANY status change ──────────────────────
+    // Non-blocking — project PATCH always succeeds even if this errors
+    if (data.status && data.status !== existing.status) {
+      const oldStatus = existing.status;
+      const newStatus = data.status;
+
+      // Log status change to lead timeline
+      logLeadActivityForProject({
+        project_id: id,
+        action:
+          newStatus === "COMPLETED" ? "PROJECT_COMPLETED" : "STATUS_CHANGED",
+        summary: `Project status changed from ${oldStatus.replace(/_/g, " ")} to ${newStatus.replace(/_/g, " ")}`,
+        performed_by: session.user.id,
+        performed_by_name: session.user.name,
+      }).catch((err) => {
+        console.error(
+          "[lead lifecycle] logLeadActivityForProject failed:",
+          err,
+        );
+      });
+
+      // If status changed to COMPLETED, also create feedback attempts
+      if (newStatus === "COMPLETED") {
+        createFeedbackAttemptsForProject({
+          project_id: id,
+          performed_by: session.user.id,
+          performed_by_name: session.user.name,
+        }).catch((err) => {
+          console.error(
+            "[lead lifecycle] createFeedbackAttemptsForProject failed:",
+            err,
+          );
+        });
+      }
+    }
 
     const updated = await db
       .select()
@@ -140,10 +178,7 @@ export async function PATCH(
   }
 }
 
-// app/api/projects/[id]/route.ts - Only the DELETE function
-
-// app/api/projects/[id]/route.ts - DELETE function (FIXED)
-
+// DELETE — full cleanup
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -173,13 +208,6 @@ export async function DELETE(
     if (!existing)
       return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    // if (
-    //   session.user.role === "PROJECT_MANAGER" &&
-    //   existing.created_by !== session.user.id
-    // ) {
-    //   return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    // }
-
     // ── Collect ALL files to delete from storage ─────────────────────────────
     type FileToDelete = {
       public_id: string;
@@ -190,10 +218,7 @@ export async function DELETE(
 
     const filesToDelete: FileToDelete[] = [];
 
-    // Helper to parse files JSON
-    function collectFiles(
-      filesJson: string | null | undefined,
-    ): FileToDelete[] {
+    function parseFiles(filesJson: string | null | undefined): FileToDelete[] {
       if (!filesJson) return [];
       try {
         const arr: unknown = JSON.parse(filesJson);
@@ -219,7 +244,7 @@ export async function DELETE(
     }
 
     // 1. Project-level files
-    filesToDelete.push(...collectFiles(existing.files));
+    filesToDelete.push(...parseFiles(existing.files));
 
     // 2. Fetch all tasks and collect their files
     const projectTasks = await db
@@ -228,13 +253,12 @@ export async function DELETE(
       .where(eq(tasks.project_id, id));
 
     for (const t of projectTasks) {
-      filesToDelete.push(...collectFiles(t.files));
+      filesToDelete.push(...parseFiles(t.files));
     }
 
     // 3. Fetch ALL comment attachments from taskNotes for all tasks in this project
     const taskIds = projectTasks.map((t) => t.id);
 
-    // Use inArray to fetch all comments for all tasks at once (more efficient)
     if (taskIds.length > 0) {
       const { inArray } = await import("drizzle-orm");
 
@@ -243,7 +267,6 @@ export async function DELETE(
         .from(taskNotes)
         .where(inArray(taskNotes.task_id, taskIds));
 
-      // Process all comments to extract attachments
       for (const c of allComments) {
         if (c.metadata) {
           try {

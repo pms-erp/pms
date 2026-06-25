@@ -1,6 +1,7 @@
 "use client";
 
 // src/app/(dashboard)/leads/page.tsx
+// CHANGES: Added ImportLeadsDialog + "Import Leads" button in header
 
 import { useEffect, useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
@@ -15,6 +16,7 @@ import {
   IconTrash,
   IconRefresh,
   IconLoader2,
+  IconUpload,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +54,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { LeadDialog } from "./_components/lead-dialog";
 import { LeadDetailSheet } from "./_components/lead-detail-sheet";
+import { ImportLeadsDialog } from "./_components/import-leads-dialog";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import type { LeadDetail } from "./_components/lead-detail-sheet";
@@ -207,7 +210,7 @@ export default function LeadsPage() {
   // ── UI state ─────────────────────────────────────────────────────────────
   const [detailId, setDetailId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  // editLead holds the FULL lead detail (not just LeadRow) so all fields populate
+  const [importDialogOpen, setImportDialogOpen] = useState(false); // NEW
   const [editLead, setEditLead] = useState<LeadDetail | null>(null);
   const [loadingEdit, setLoadingEdit] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
@@ -217,7 +220,7 @@ export default function LeadsPage() {
   const canManage = role === "ADMIN" || role === "PROJECT_MANAGER";
   const canDeleteLead = (lead: LeadRow) =>
     canManage || lead.sent_by === session?.user?.id;
-  // Fetch marketing users for the dropdown (only once)
+
   useEffect(() => {
     if (!session?.user) return;
     fetch("/api/leads/marketing-users")
@@ -267,8 +270,6 @@ export default function LeadsPage() {
     setDialogOpen(true);
   }
 
-  // Fetch the full lead detail before opening the edit dialog so all fields
-  // (email, phone, requirements, platform_data, etc.) are populated correctly.
   async function openEdit(leadId: string) {
     setLoadingEdit(true);
     try {
@@ -340,6 +341,15 @@ export default function LeadsPage() {
           <Button variant="outline" size="sm" onClick={fetchLeads}>
             <IconRefresh size={16} />
           </Button>
+          {/* ── NEW: Import Leads button ── */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setImportDialogOpen(true)}
+          >
+            <IconUpload size={16} className="mr-1" />
+            Import Leads
+          </Button>
           <Button size="sm" onClick={openCreate}>
             <IconPlus size={16} className="mr-1" />
             Add Lead
@@ -390,7 +400,6 @@ export default function LeadsPage() {
           </SelectContent>
         </Select>
 
-        {/* ── Marketing user filter dropdown ─────────────────────────── */}
         {marketingUsers.length > 1 && (
           <Select value={sentByFilter} onValueChange={setSentByFilter}>
             <SelectTrigger className="w-[180px]">
@@ -458,7 +467,6 @@ export default function LeadsPage() {
                   className="hover:bg-muted/30 cursor-pointer"
                   onClick={() => openDetail(lead.id)}
                 >
-                  {/* Client + Username */}
                   <TableCell>
                     <div className="font-medium text-sm">
                       {lead.client_name}
@@ -470,12 +478,10 @@ export default function LeadsPage() {
                     )}
                   </TableCell>
 
-                  {/* Location */}
                   <TableCell className="text-sm text-muted-foreground">
                     {lead.country ?? "—"}
                   </TableCell>
 
-                  {/* Requirements (Project Title + Category) */}
                   <TableCell>
                     <div className="text-sm max-w-[220px] truncate">
                       {lead.project_title ?? "—"}
@@ -487,7 +493,6 @@ export default function LeadsPage() {
                     )}
                   </TableCell>
 
-                  {/* Quote */}
                   <TableCell className="text-sm font-medium">
                     {lead.proposed_quote
                       ? `$${Number(lead.proposed_quote).toLocaleString()}`
@@ -496,12 +501,10 @@ export default function LeadsPage() {
                         : "—"}
                   </TableCell>
 
-                  {/* Date Contacted */}
                   <TableCell className="text-xs text-muted-foreground">
                     {format(new Date(lead.date_received), "dd MMM yy")}
                   </TableCell>
 
-                  {/* Follow-up */}
                   <TableCell className="text-xs text-muted-foreground">
                     {lead.next_follow_up_date ? (
                       <span className="inline-flex items-center gap-1">
@@ -518,7 +521,6 @@ export default function LeadsPage() {
                     )}
                   </TableCell>
 
-                  {/* Status */}
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -546,7 +548,6 @@ export default function LeadsPage() {
                     </DropdownMenu>
                   </TableCell>
 
-                  {/* Actions */}
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1">
                       <Button
@@ -648,6 +649,17 @@ export default function LeadsPage() {
           openEdit(leadId);
         }}
         onRefresh={fetchLeads}
+      />
+
+      {/* ── NEW: Import Leads Dialog ── */}
+      <ImportLeadsDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        onSuccess={() => {
+          setImportDialogOpen(false);
+          fetchLeads();
+          toast.success("Leads imported successfully!");
+        }}
       />
 
       {/* Delete Confirmation */}

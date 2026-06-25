@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +32,8 @@ import {
   IconLoader,
   IconCheck,
   IconAlertCircle,
+  IconSearch,
+  IconChevronDown,
 } from "@tabler/icons-react";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { uploadFile as uploadFileFn, deleteFile } from "@/lib/upload-file";
@@ -42,10 +44,13 @@ type TeamOption = {
   slug: string;
 };
 
+// ✅ Added is_active field to TeamMember type
 type TeamMember = {
   id: string;
   name: string;
   username: string;
+  role?: string;
+  is_active?: boolean;
 };
 
 type UploadedFile = {
@@ -57,7 +62,6 @@ type UploadedFile = {
   size: number;
 };
 
-// Track upload status per file
 type PendingFile = {
   file: File;
   id: string;
@@ -122,6 +126,11 @@ export function CreateProjectTaskDialog({
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
+  // Search state for assign to dropdown
+  const [assignSearch, setAssignSearch] = useState("");
+  const [assignDropdownOpen, setAssignDropdownOpen] = useState(false);
+  const assignDropdownRef = useRef<HTMLDivElement>(null);
+
   const [formData, setFormData] = useState<FormDataState>({
     team_type: "",
     title: "",
@@ -131,13 +140,37 @@ export function CreateProjectTaskDialog({
     due_date: null,
   });
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        assignDropdownRef.current &&
+        !assignDropdownRef.current.contains(event.target as Node)
+      ) {
+        setAssignDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Filter team members based on search
+  const filteredTeamMembers = teamMembers.filter((m) => {
+    const searchLower = assignSearch.toLowerCase();
+    return (
+      m.name.toLowerCase().includes(searchLower) ||
+      m.username.toLowerCase().includes(searchLower)
+    );
+  });
+
+  // Get selected member display text
+  const selectedMember = teamMembers.find((m) => m.id === formData.assigned_to);
+
   useEffect(() => {
     if (open) {
       fetchTeamMembers();
       fetchTeamOptions();
     } else {
-      // When dialog closes without submitting, delete any already-uploaded
-      // files that were never saved to a task
       setPendingFiles((prev) => {
         prev
           .filter((p) => p.status === "uploaded" && p.uploadedData?.public_id)
@@ -165,11 +198,12 @@ export function CreateProjectTaskDialog({
         assigned_to: "",
         due_date: null,
       });
+      setAssignSearch("");
+      setAssignDropdownOpen(false);
       setIsDraggingOver(false);
     }
   }, [open]);
 
-  // ── Eager upload — auto-picks Cloudinary (<4 MB) or R2 presigned (≥4 MB) ──
   const uploadSingleFile = async (file: File): Promise<void> => {
     const id = `file-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -190,7 +224,7 @@ export function CreateProjectTaskDialog({
         public_id: data.public_id,
         name: file.name,
         resource_type: data.resource_type,
-        storage: data.storage, // ← persisted so delete knows which backend
+        storage: data.storage,
         size: data.size,
       };
 
@@ -226,12 +260,10 @@ export function CreateProjectTaskDialog({
     );
   };
 
-  // ── Remove: if already uploaded, delete from storage first ────────────────
   const removeFile = (id: string) => {
     setPendingFiles((prev) => {
       const file = prev.find((p) => p.id === id);
 
-      // Fire-and-forget storage delete for successfully uploaded files
       if (file?.status === "uploaded" && file.uploadedData?.public_id) {
         deleteFile({
           public_id: file.uploadedData.public_id,
@@ -251,6 +283,7 @@ export function CreateProjectTaskDialog({
     });
   };
 
+  // ✅ Updated fetchTeamMembers to filter out CLIENT users AND inactive users
   async function fetchTeamMembers() {
     setFetchingMembers(true);
     try {
@@ -258,7 +291,20 @@ export function CreateProjectTaskDialog({
       if (!res.ok) throw new Error();
       const data = await res.json();
       const list = data.data || data.users || data.allUsers || data || [];
-      setTeamMembers(Array.isArray(list) ? list : []);
+
+      // Filter out:
+      // 1. Users with CLIENT or CUSTOMER role
+      // 2. Users who are inactive (is_active === false)
+      const filteredList = Array.isArray(list)
+        ? list.filter((user: TeamMember) => {
+            const role = user.role?.toUpperCase();
+            const isClient = role === "CLIENT" || role === "CUSTOMER";
+            const isActive = user.is_active !== false; // default to true if undefined
+            return !isClient && isActive;
+          })
+        : [];
+
+      setTeamMembers(filteredList);
     } catch {
       toast.error("Failed to load team members");
     } finally {
@@ -340,7 +386,6 @@ export function CreateProjectTaskDialog({
       }
 
       toast.success("Task created successfully");
-      // Clear files WITHOUT triggering storage delete — they're now saved to the task
       setPendingFiles([]);
       setOpen(false);
       router.refresh();
@@ -490,33 +535,89 @@ export function CreateProjectTaskDialog({
             )}
           </div>
 
-          {/* Assign To */}
-          <div className="space-y-2">
+          {/* Assign To - Searchable Dropdown */}
+          <div className="space-y-2" ref={assignDropdownRef}>
             <Label>
               Assign To <span className="text-destructive">*</span>
             </Label>
-            <Select
-              value={formData.assigned_to}
-              onValueChange={(v) =>
-                setFormData({ ...formData, assigned_to: v })
-              }
-              disabled={fetchingMembers}
-            >
-              <SelectTrigger>
-                <SelectValue
-                  placeholder={
-                    fetchingMembers ? "Loading…" : "Select team member"
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {teamMembers.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name} (@{m.username})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setAssignDropdownOpen(!assignDropdownOpen)}
+                disabled={fetchingMembers}
+                className="flex w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className={selectedMember ? "" : "text-muted-foreground"}>
+                  {fetchingMembers
+                    ? "Loading…"
+                    : selectedMember
+                      ? `${selectedMember.name} (@${selectedMember.username})`
+                      : "Search and select team member"}
+                </span>
+                <IconChevronDown className="h-4 w-4 opacity-50" />
+              </button>
+
+              {assignDropdownOpen && (
+                <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md">
+                  {/* Search Input */}
+                  <div className="flex items-center border-b px-3">
+                    <IconSearch className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+                    <input
+                      type="text"
+                      placeholder="Search by name or username…"
+                      value={assignSearch}
+                      onChange={(e) => setAssignSearch(e.target.value)}
+                      className="flex h-9 w-full rounded-md bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      autoFocus
+                    />
+                    {assignSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setAssignSearch("")}
+                        className="ml-2 rounded-sm opacity-70 hover:opacity-100"
+                      >
+                        <IconX className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Options List */}
+                  <div className="max-h-[200px] overflow-y-auto p-1">
+                    {filteredTeamMembers.length === 0 ? (
+                      <p className="py-6 text-center text-sm text-muted-foreground">
+                        No team members found.
+                      </p>
+                    ) : (
+                      filteredTeamMembers.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setFormData({ ...formData, assigned_to: m.id });
+                            setAssignDropdownOpen(false);
+                            setAssignSearch("");
+                          }}
+                          className={`relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 px-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground ${
+                            formData.assigned_to === m.id
+                              ? "bg-accent text-accent-foreground"
+                              : ""
+                          }`}
+                        >
+                          <IconCheck
+                            className={`mr-2 h-4 w-4 ${
+                              formData.assigned_to === m.id
+                                ? "opacity-100"
+                                : "opacity-0"
+                            }`}
+                          />
+                          {m.name} (@{m.username})
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Attachments */}
@@ -599,7 +700,6 @@ export function CreateProjectTaskDialog({
                             : "bg-muted border-transparent"
                       }`}
                     >
-                      {/* Thumbnail or Icon */}
                       <div className="relative h-9 w-9 shrink-0 rounded overflow-hidden border bg-muted flex items-center justify-center">
                         {isImage && pf.status !== "error" ? (
                           <img
@@ -655,7 +755,6 @@ export function CreateProjectTaskDialog({
                         )}
                       </div>
 
-                      {/* Remove Button */}
                       {!loading && (
                         <button
                           type="button"

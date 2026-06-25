@@ -2,13 +2,9 @@
 
 // src/app/(dashboard)/leads/_components/lead-detail-sheet.tsx
 
-import { useEffect, useState } from "react";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,35 +16,35 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import {
   IconEdit,
   IconPlus,
   IconTrash,
   IconExternalLink,
   IconLoader2,
-  IconHistory,
-  IconMessages,
   IconUser,
-  IconBriefcase,
-  IconCash,
   IconCalendar,
   IconMapPin,
-  IconMail,
-  IconPhone,
   IconLink,
-  IconNotes,
-  IconChartBar,
-  IconClock,
   IconCheck,
+  IconSearch,
   IconX,
+  IconArrowUpRight,
+  IconMaximize,
+  IconBriefcase,
+  IconPhone,
+  IconMail,
+  IconClock,
+  IconTrendingUp,
 } from "@tabler/icons-react";
 import { toast } from "sonner";
+import { useSession } from "next-auth/react";
+import { LeadPostDelivery } from "./lead-post-delivery";
+import { LeadUpsell } from "./lead-upsell";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type Followup = {
   id: string;
@@ -64,10 +60,27 @@ type ActivityLog = {
   id: string;
   action: string;
   summary: string;
-  changes: string | null; // JSON string
+  changes: string | null;
   performed_by: string;
   performed_by_name: string;
   created_at: string;
+};
+
+type LinkedProject = {
+  id: string;
+  project_id: string;
+  project_name: string;
+  project_status: string;
+  linked_by_name: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+type ProjectSearchResult = {
+  id: string;
+  name: string;
+  client_name: string | null;
+  status: string;
 };
 
 export type LeadDetail = {
@@ -112,37 +125,61 @@ type Props = {
   onRefresh: () => void;
 };
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const STATUS_COLORS: Record<string, string> = {
-  NEW: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  NEW: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
   CONTACTED:
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
+    "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300",
   QUALIFIED:
-    "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
+    "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
   PROPOSAL_SENT:
-    "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
+    "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
   NEGOTIATION:
-    "bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-300",
-  WON: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-  LOST: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-  ON_HOLD: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
+    "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300",
+  WON: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
+  LOST: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
+  ON_HOLD: "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-300",
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
-  LOW: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
-  MEDIUM:
-    "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-  HIGH: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
+  LOW: "bg-slate-100 text-slate-600",
+  MEDIUM: "bg-amber-100 text-amber-700",
+  HIGH: "bg-red-100 text-red-700",
 };
 
-const ACTION_COLORS: Record<string, string> = {
+const PROJECT_STATUS_COLORS: Record<string, string> = {
+  PLANNING: "bg-slate-100 text-slate-700",
+  ACTIVE: "bg-blue-100 text-blue-700",
+  IN_QA: "bg-purple-100 text-purple-700",
+  ON_HOLD: "bg-amber-100 text-amber-700",
+  COMPLETED: "bg-green-100 text-green-700",
+  CANCELLED: "bg-red-100 text-red-700",
+};
+
+const ACTION_ICON: Record<string, string> = {
+  CREATED: "bg-green-500",
+  UPDATED: "bg-blue-500",
+  STATUS_CHANGED: "bg-purple-500",
+  FOLLOWUP_ADDED: "bg-amber-500",
+  FOLLOWUP_DELETED: "bg-red-500",
+  PROJECT_LINKED: "bg-teal-500",
+  PROJECT_UNLINKED: "bg-orange-500",
+  PROJECT_COMPLETED: "bg-green-500",
+};
+
+const ACTION_BADGE: Record<string, string> = {
   CREATED: "bg-green-100 text-green-700 border-green-200",
   UPDATED: "bg-blue-100 text-blue-700 border-blue-200",
   STATUS_CHANGED: "bg-purple-100 text-purple-700 border-purple-200",
   FOLLOWUP_ADDED: "bg-amber-100 text-amber-700 border-amber-200",
   FOLLOWUP_DELETED: "bg-red-100 text-red-700 border-red-200",
+  PROJECT_LINKED: "bg-teal-100 text-teal-700 border-teal-200",
+  PROJECT_UNLINKED: "bg-orange-100 text-orange-700 border-orange-200",
+  PROJECT_COMPLETED: "bg-green-100 text-green-700 border-green-200",
 };
 
-type Tab = "details" | "followups" | "activity";
+type Tab = "overview" | "followups" | "post-delivery" | "timeline";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -153,10 +190,29 @@ export function LeadDetailSheet({
   onEdit,
   onRefresh,
 }: Props) {
+  const router = useRouter();
+  const { data: session } = useSession();
+  const canManage =
+    session?.user?.role === "ADMIN" ||
+    session?.user?.role === "PROJECT_MANAGER";
+
   const [lead, setLead] = useState<LeadDetail | null>(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<Tab>("details");
+  const [activeTab, setActiveTab] = useState<Tab>("overview");
 
+  // ── Linked projects ────────────────────────────────────────────────────────
+  const [linkedProjects, setLinkedProjects] = useState<LinkedProject[]>([]);
+  const [lpLoading, setLpLoading] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const [searchResults, setSearchResults] = useState<ProjectSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [linkNotes, setLinkNotes] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [selectedProject, setSelectedProject] =
+    useState<ProjectSearchResult | null>(null);
+
+  // ── Follow-ups ─────────────────────────────────────────────────────────────
   const [fuOpen, setFuOpen] = useState(false);
   const [fuSaving, setFuSaving] = useState(false);
   const [fuForm, setFuForm] = useState({
@@ -167,28 +223,114 @@ export function LeadDetailSheet({
     next_followup_date: "",
   });
 
-  const fetchDetail = async (id: string) => {
+  const fetchDetail = useCallback(async (id: string) => {
     setLoading(true);
     setLead(null);
     try {
-      const res = await fetch(`/api/leads/${id}`);
+      const res = await fetch(`/api/leads/${id}`, { cache: "no-store" });
       if (!res.ok) throw new Error();
-      const data = await res.json();
-      setLead(data);
+      setLead(await res.json());
     } catch {
       toast.error("Failed to load lead details");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  const fetchLinkedProjects = useCallback(async (id: string) => {
+    setLpLoading(true);
+    try {
+      const res = await fetch(`/api/leads/${id}/link-project`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setLinkedProjects(data.linked ?? []);
+    } catch {
+      // silent
+    } finally {
+      setLpLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (open && leadId) {
       setFuOpen(false);
-      setActiveTab("details");
+      setLinkOpen(false);
+      setActiveTab("overview");
+      setLinkedProjects([]);
       fetchDetail(leadId);
+      fetchLinkedProjects(leadId);
     }
-  }, [open, leadId]);
+  }, [open, leadId, fetchDetail, fetchLinkedProjects]);
+
+  // Project search debounce
+  useEffect(() => {
+    if (!searchQ.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await fetch(
+          `/api/projects/search?q=${encodeURIComponent(searchQ)}`,
+        );
+        if (!res.ok) throw new Error();
+        setSearchResults((await res.json()).projects ?? []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchQ]);
+
+  const handleLinkProject = async () => {
+    if (!selectedProject) {
+      toast.error("Select a project first");
+      return;
+    }
+    setLinking(true);
+    try {
+      const res = await fetch(`/api/leads/${leadId}/link-project`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: selectedProject.id,
+          notes: linkNotes || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success("Project linked");
+      setLinkOpen(false);
+      setSelectedProject(null);
+      setSearchQ("");
+      setLinkNotes("");
+      setSearchResults([]);
+      fetchLinkedProjects(leadId);
+      fetchDetail(leadId);
+    } catch {
+      toast.error("Failed to link project");
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const handleUnlink = async (project_id: string) => {
+    const tid = toast.loading("Unlinking...");
+    try {
+      const res = await fetch(
+        `/api/leads/${leadId}/link-project?project_id=${project_id}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) throw new Error();
+      toast.success("Project unlinked", { id: tid });
+      fetchLinkedProjects(leadId);
+      fetchDetail(leadId);
+    } catch {
+      toast.error("Failed to unlink", { id: tid });
+    }
+  };
 
   const handleAddFollowup = async () => {
     if (!fuForm.discussion_summary.trim()) {
@@ -229,24 +371,41 @@ export function LeadDetailSheet({
         { method: "DELETE" },
       );
       if (!res.ok) throw new Error();
-      toast.success("Follow-up deleted", { id: tid });
+      toast.success("Deleted", { id: tid });
       fetchDetail(leadId);
     } catch {
-      toast.error("Failed to delete follow-up", { id: tid });
+      toast.error("Failed to delete", { id: tid });
     }
   };
 
-  const tabClass = (t: Tab) =>
-    `px-4 py-2.5 text-sm font-medium border-b-2 transition-all ${
-      activeTab === t
-        ? "border-primary text-primary bg-primary/5"
-        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
-    }`;
+  const tabBtn = (t: Tab, label: string, count?: number) => (
+    <button
+      onClick={() => setActiveTab(t)}
+      className={`flex items-center gap-1.5 px-1 pb-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+        activeTab === t
+          ? "border-foreground text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {label}
+      {count !== undefined && count > 0 && (
+        <span
+          className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${
+            activeTab === t
+              ? "bg-foreground text-background"
+              : "bg-muted text-muted-foreground"
+          }`}
+        >
+          {count}
+        </span>
+      )}
+    </button>
+  );
 
-  const formatCurrency = (value: string | null) => {
-    if (!value) return null;
-    return `$${Number(value).toLocaleString()}`;
-  };
+  const hasLinkedProject = linkedProjects.length > 0;
+  const isCompleted = linkedProjects.some(
+    (p) => p.project_status === "COMPLETED",
+  );
 
   return (
     <Sheet
@@ -255,12 +414,12 @@ export function LeadDetailSheet({
         if (!v) onClose();
       }}
     >
-      <SheetContent className="w-[550px] sm:w-[700px] p-0 flex flex-col overflow-hidden">
+      <SheetContent className="p-0 flex flex-col overflow-hidden border-l min-w-[47vw]">
         {loading && (
           <div className="flex items-center justify-center flex-1">
             <IconLoader2
               className="animate-spin text-muted-foreground"
-              size={32}
+              size={28}
             />
           </div>
         )}
@@ -273,497 +432,693 @@ export function LeadDetailSheet({
 
         {!loading && lead && (
           <>
-            {/* ── Enhanced Header ── */}
-            <SheetHeader className="px-6 pt-6 pb-4 border-b shrink-0 bg-muted/30">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Badge variant="outline" className="text-xs">
-                      {lead.platform}
-                    </Badge>
-                    <span
-                      className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[lead.status]}`}
-                    >
-                      {lead.status.replace(/_/g, " ")}
-                    </span>
-                    <span
-                      className={`text-xs font-semibold px-2 py-0.5 rounded-full ${PRIORITY_COLORS[lead.priority]}`}
-                    >
-                      {lead.priority}
-                    </span>
-                  </div>
-                  <SheetTitle className="text-xl leading-tight truncate">
-                    {lead.client_name}
-                  </SheetTitle>
-                  {lead.username && (
-                    <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1">
-                      <IconUser size={14} />@{lead.username}
-                    </p>
-                  )}
+            {/* ── Header ── */}
+            <div className="px-6 pt-5 pb-0 border-b shrink-0">
+              {/* Top row: platform/status badges + action buttons */}
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold px-2 py-0.5 rounded bg-muted text-muted-foreground tracking-wide">
+                    {lead.platform}
+                  </span>
+                  <span
+                    className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[lead.status]}`}
+                  >
+                    {lead.status.replace(/_/g, " ")}
+                  </span>
+                  <span
+                    className={`text-xs font-semibold px-2 py-0.5 rounded-full ${PRIORITY_COLORS[lead.priority]}`}
+                  >
+                    {lead.priority} priority
+                  </span>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    onClose();
-                    onEdit(lead.id);
-                  }}
-                >
-                  <IconEdit size={16} className="mr-1.5" />
-                  Edit
-                </Button>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      onClose();
+                      router.push(`/leads/${lead.id}`);
+                    }}
+                  >
+                    <IconMaximize size={15} />
+                    Expand
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      onClose();
+                      onEdit(lead.id);
+                    }}
+                  >
+                    <IconEdit size={15} />
+                    Edit
+                  </Button>
+                </div>
               </div>
 
-              {/* ── Tabs ─ */}
-              <div className="flex gap-1 mt-4 -mb-4">
-                <button
-                  className={tabClass("details")}
-                  onClick={() => setActiveTab("details")}
-                >
-                  <span className="flex items-center gap-2">
-                    <IconBriefcase size={16} />
-                    Details
+              {/* Client name */}
+              <h2 className="text-2xl font-bold leading-tight mb-1">
+                {lead.client_name}
+              </h2>
+
+              {/* Meta row */}
+              <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
+                {lead.username && (
+                  <span className="flex items-center gap-1">
+                    <IconUser size={14} />@{lead.username}
                   </span>
-                </button>
-                <button
-                  className={tabClass("followups")}
-                  onClick={() => setActiveTab("followups")}
-                >
-                  <span className="flex items-center gap-2">
-                    <IconMessages size={16} />
-                    Follow-ups
-                    <Badge variant="secondary" className="ml-1 text-xs">
-                      {lead.followups.length}
-                    </Badge>
-                  </span>
-                </button>
-                <button
-                  className={tabClass("activity")}
-                  onClick={() => setActiveTab("activity")}
-                >
-                  <span className="flex items-center gap-2">
-                    <IconHistory size={16} />
-                    Activity
-                  </span>
-                </button>
+                )}
+                <span className="flex items-center gap-1">
+                  <IconCalendar size={14} />
+                  {format(new Date(lead.date_received), "dd MMM yyyy")}
+                </span>
               </div>
-            </SheetHeader>
 
-            {/* ── Scrollable body ── */}
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-muted/20">
-              {/* ════════════════ DETAILS TAB ════════════════ */}
-              {activeTab === "details" && (
-                <div className="space-y-5">
-                  {/* Contact Information */}
-                  <Card>
-                    <CardContent className="p-4 space-y-3">
-                      <h3 className="text-sm font-semibold flex items-center gap-2">
-                        <IconUser size={16} className="text-primary" />
-                        Contact Information
-                      </h3>
-                      <Separator className="my-2" />
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <InfoRow
-                          icon={<IconCalendar size={14} />}
-                          label="Date Received"
-                          value={format(
-                            new Date(lead.date_received),
-                            "dd MMM yyyy",
-                          )}
-                        />
-                        <InfoRow
-                          icon={<IconMapPin size={14} />}
-                          label="Country"
-                          value={lead.country}
-                        />
-                        <InfoRow
-                          icon={<IconMail size={14} />}
-                          label="Email"
-                          value={lead.email}
-                        />
-                        <InfoRow
-                          icon={<IconPhone size={14} />}
-                          label="Phone"
-                          value={lead.phone}
-                        />
-                        {lead.profile_url && (
-                          <div className="col-span-2">
-                            <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                              <IconLink size={12} />
-                              Profile URL
-                            </p>
-                            <a
-                              href={lead.profile_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium"
-                            >
-                              {lead.profile_url.length > 60
-                                ? lead.profile_url.slice(0, 60) + "..."
-                                : lead.profile_url}
-                              <IconExternalLink size={14} />
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Project Details */}
-                  {(lead.project_title ||
-                    lead.requirements ||
-                    lead.challenges ||
-                    lead.budget) && (
-                    <Card>
-                      <CardContent className="p-4 space-y-3">
-                        <h3 className="text-sm font-semibold flex items-center gap-2">
-                          <IconBriefcase size={16} className="text-primary" />
-                          Project Details
-                        </h3>
-                        <Separator className="my-2" />
-                        {lead.project_title && (
-                          <div>
-                            <p className="text-xs text-muted-foreground mb-1">
-                              Project Title
-                            </p>
-                            <p className="text-sm font-semibold">
-                              {lead.project_title}
-                            </p>
-                          </div>
-                        )}
-                        {lead.service_category && (
-                          <InfoRow
-                            label="Service Category"
-                            value={lead.service_category.replace(/_/g, " ")}
-                          />
-                        )}
-
-                        <div className="grid grid-cols-3 gap-3 pt-2">
-                          {lead.budget && (
-                            <MetricCard
-                              icon={<IconCash size={16} />}
-                              label="Budget"
-                              value={formatCurrency(lead.budget)}
-                            />
-                          )}
-                          {lead.proposed_quote && (
-                            <MetricCard
-                              icon={<IconChartBar size={16} />}
-                              label="Quote"
-                              value={formatCurrency(lead.proposed_quote)}
-                            />
-                          )}
-                          {lead.deal_value && (
-                            <MetricCard
-                              icon={<IconCheck size={16} />}
-                              label="Deal Value"
-                              value={formatCurrency(lead.deal_value)}
-                            />
-                          )}
-                        </div>
-
-                        {lead.expected_timeline && (
-                          <InfoRow
-                            icon={<IconClock size={14} />}
-                            label="Expected Timeline"
-                            value={lead.expected_timeline}
-                          />
-                        )}
-
-                        {lead.requirements && (
-                          <div className="pt-2">
-                            <p className="text-xs text-muted-foreground mb-1">
-                              Requirements
-                            </p>
-                            <p className="text-sm whitespace-pre-wrap bg-muted/50 p-3 rounded-md">
-                              {lead.requirements}
-                            </p>
-                          </div>
-                        )}
-                        {lead.challenges && (
-                          <div>
-                            <p className="text-xs text-muted-foreground mb-1">
-                              Challenges
-                            </p>
-                            <p className="text-sm whitespace-pre-wrap bg-muted/50 p-3 rounded-md">
-                              {lead.challenges}
-                            </p>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {/* Platform-specific Data */}
-                  {Object.entries(lead.platform_data ?? {}).filter(([, v]) => v)
-                    .length > 0 && (
-                    <Card>
-                      <CardContent className="p-4 space-y-3">
-                        <h3 className="text-sm font-semibold flex items-center gap-2">
-                          <IconLink size={16} className="text-primary" />
-                          {lead.platform} Details
-                        </h3>
-                        <Separator className="my-2" />
-                        <div className="grid grid-cols-2 gap-3">
-                          {Object.entries(lead.platform_data)
-                            .filter(([, v]) => v)
-                            .map(([k, v]) => (
-                              <InfoRow
-                                key={k}
-                                label={k.replace(/_/g, " ")}
-                                value={v}
-                              />
-                            ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {/* Notes */}
-                  {lead.notes && (
-                    <Card>
-                      <CardContent className="p-4 space-y-3">
-                        <h3 className="text-sm font-semibold flex items-center gap-2">
-                          <IconNotes size={16} className="text-primary" />
-                          Notes
-                        </h3>
-                        <Separator className="my-2" />
-                        <p className="text-sm text-muted-foreground whitespace-pre-wrap bg-muted/50 p-3 rounded-md">
-                          {lead.notes}
-                        </p>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {/* Meta Info */}
-                  <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t">
-                    <span>Added by {lead.sent_by_name ?? "Unknown"}</span>
-                    <span>
-                      {format(new Date(lead.date_received), "dd MMM yyyy")}
-                    </span>
-                  </div>
+              {/* Quote card */}
+              {lead.proposed_quote && (
+                <div className="mb-4 inline-flex items-center gap-2 bg-muted/60 rounded-lg px-4 py-2.5">
+                  <span className="text-xs text-muted-foreground font-medium">
+                    Quote
+                  </span>
+                  <span className="text-lg font-bold">
+                    ${Number(lead.proposed_quote).toLocaleString()}
+                  </span>
                 </div>
               )}
 
-              {/* ════════════════ FOLLOW-UPS TAB ════════════════ */}
-              {activeTab === "followups" && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold">Follow-ups</h3>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setFuOpen((o) => !o)}
-                    >
-                      <IconPlus size={16} className="mr-1.5" />
-                      Add Follow-up
-                    </Button>
-                  </div>
+              {/* Tabs */}
+              <div className="flex gap-5 -mb-px">
+                {tabBtn("overview", "Overview")}
+                {tabBtn("followups", "Follow-ups", lead.followups.length)}
+                {tabBtn("post-delivery", "Post-Delivery")}
+                {tabBtn("timeline", "Timeline", lead.activity_logs.length)}
+              </div>
+            </div>
 
-                  {fuOpen && (
-                    <Card className="border-primary/50 bg-primary/5">
-                      <CardContent className="p-4 space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <Label className="text-xs">Date *</Label>
-                            <Input
-                              type="date"
-                              value={fuForm.followup_date}
-                              onChange={(e) =>
-                                setFuForm((f) => ({
-                                  ...f,
-                                  followup_date: e.target.value,
-                                }))
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-xs">Type *</Label>
-                            <Select
-                              value={fuForm.followup_type}
-                              onValueChange={(v) =>
-                                setFuForm((f) => ({ ...f, followup_type: v }))
-                              }
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {[
-                                  "CALL",
-                                  "EMAIL",
-                                  "FIVERR",
-                                  "UPWORK",
-                                  "MEETING",
-                                  "MESSAGE",
-                                  "OTHER",
-                                ].map((t) => (
-                                  <SelectItem key={t} value={t}>
-                                    {t}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs">
-                            Discussion Summary *
+            {/* ── Scrollable Body ── */}
+            <div className="flex-1 overflow-y-auto">
+              {/* ════ OVERVIEW TAB ════ */}
+              {activeTab === "overview" && (
+                <div className="p-6 space-y-6">
+                  {/* Linked Projects */}
+                  <section>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-semibold flex items-center gap-2">
+                        <IconBriefcase
+                          size={15}
+                          className="text-muted-foreground"
+                        />
+                        Linked Projects
+                      </h3>
+                      {canManage && (
+                        <button
+                          onClick={() => setLinkOpen((o) => !o)}
+                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          <IconLink size={13} />
+                          Link Project
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Link form */}
+                    {linkOpen && canManage && (
+                      <div className="mb-3 p-3 border rounded-lg bg-muted/30 space-y-3">
+                        <div>
+                          <Label className="text-xs mb-1.5 block">
+                            Search Project
                           </Label>
-                          <Textarea
-                            value={fuForm.discussion_summary}
-                            onChange={(e) =>
-                              setFuForm((f) => ({
-                                ...f,
-                                discussion_summary: e.target.value,
-                              }))
-                            }
-                            rows={2}
-                            placeholder="What was discussed..."
-                          />
+                          {selectedProject ? (
+                            <div className="flex items-center justify-between p-2 bg-background border rounded-md">
+                              <div>
+                                <p className="text-sm font-medium">
+                                  {selectedProject.name}
+                                </p>
+                                {selectedProject.client_name && (
+                                  <p className="text-xs text-muted-foreground">
+                                    {selectedProject.client_name}
+                                  </p>
+                                )}
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={() => {
+                                  setSelectedProject(null);
+                                  setSearchQ("");
+                                }}
+                              >
+                                <IconX size={13} />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="relative">
+                              <IconSearch
+                                size={13}
+                                className="absolute left-2.5 top-2.5 text-muted-foreground"
+                              />
+                              <Input
+                                className="pl-8 h-8 text-sm"
+                                placeholder="Search by name or client..."
+                                value={searchQ}
+                                onChange={(e) => setSearchQ(e.target.value)}
+                              />
+                              {(searching ||
+                                searchResults.length > 0 ||
+                                (searchQ.trim() && !searching)) && (
+                                <div className="absolute z-20 w-full mt-1 bg-background border rounded-md shadow-lg max-h-40 overflow-y-auto">
+                                  {searching && (
+                                    <div className="flex items-center gap-2 p-2.5 text-sm text-muted-foreground">
+                                      <IconLoader2
+                                        size={13}
+                                        className="animate-spin"
+                                      />
+                                      Searching...
+                                    </div>
+                                  )}
+                                  {!searching &&
+                                    searchResults.length === 0 &&
+                                    searchQ.trim() && (
+                                      <p className="p-2.5 text-sm text-muted-foreground">
+                                        No projects found
+                                      </p>
+                                    )}
+                                  {searchResults.map((p) => (
+                                    <button
+                                      key={p.id}
+                                      className="w-full text-left px-3 py-2 hover:bg-muted/60 flex items-center justify-between text-sm"
+                                      onClick={() => {
+                                        setSelectedProject(p);
+                                        setSearchQ("");
+                                        setSearchResults([]);
+                                      }}
+                                    >
+                                      <div>
+                                        <p className="font-medium text-sm">
+                                          {p.name}
+                                        </p>
+                                        {p.client_name && (
+                                          <p className="text-xs text-muted-foreground">
+                                            {p.client_name}
+                                          </p>
+                                        )}
+                                      </div>
+                                      <span
+                                        className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${PROJECT_STATUS_COLORS[p.status] ?? "bg-muted"}`}
+                                      >
+                                        {p.status}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs">Next Action</Label>
+                        <div>
+                          <Label className="text-xs mb-1.5 block">
+                            Notes (optional)
+                          </Label>
                           <Input
-                            value={fuForm.next_action}
-                            onChange={(e) =>
-                              setFuForm((f) => ({
-                                ...f,
-                                next_action: e.target.value,
-                              }))
-                            }
-                            placeholder="Next step..."
+                            className="h-8 text-sm"
+                            placeholder="e.g. Main delivery project"
+                            value={linkNotes}
+                            onChange={(e) => setLinkNotes(e.target.value)}
                           />
                         </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs">Next Follow-up Date</Label>
-                          <Input
-                            type="date"
-                            value={fuForm.next_followup_date}
-                            onChange={(e) =>
-                              setFuForm((f) => ({
-                                ...f,
-                                next_followup_date: e.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="flex gap-2 justify-end pt-2">
+                        <div className="flex gap-2 justify-end">
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => setFuOpen(false)}
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              setLinkOpen(false);
+                              setSelectedProject(null);
+                              setSearchQ("");
+                              setLinkNotes("");
+                              setSearchResults([]);
+                            }}
                           >
                             Cancel
                           </Button>
                           <Button
                             size="sm"
-                            onClick={handleAddFollowup}
-                            disabled={fuSaving}
+                            className="h-7 text-xs"
+                            disabled={linking || !selectedProject}
+                            onClick={handleLinkProject}
                           >
-                            {fuSaving ? "Saving..." : "Save Follow-up"}
+                            {linking ? "Linking..." : "Link"}
                           </Button>
                         </div>
-                      </CardContent>
-                    </Card>
+                      </div>
+                    )}
+
+                    {lpLoading ? (
+                      <div className="py-4 flex justify-center">
+                        <IconLoader2
+                          size={20}
+                          className="animate-spin text-muted-foreground"
+                        />
+                      </div>
+                    ) : linkedProjects.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-2">
+                        No project linked yet.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {linkedProjects.map((lp) => (
+                          <div
+                            key={lp.id}
+                            className="flex items-center justify-between p-3 border rounded-lg bg-muted/20 hover:bg-muted/40 transition-colors"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className={`w-2 h-2 rounded-full shrink-0 ${lp.project_status === "COMPLETED" ? "bg-green-500" : lp.project_status === "ACTIVE" ? "bg-blue-500" : "bg-muted-foreground"}`}
+                              />
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium truncate">
+                                  {lp.project_name}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {lp.project_status.replace(/_/g, " ")}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <a
+                                href={`/projects/${lp.project_id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="h-7 w-7 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                <IconExternalLink size={14} />
+                              </a>
+                              {canManage && (
+                                <button
+                                  onClick={() => handleUnlink(lp.project_id)}
+                                  className="h-7 w-7 flex items-center justify-center rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors"
+                                >
+                                  <IconTrash size={14} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  <div className="border-t" />
+
+                  {/* Contact Information */}
+                  <section>
+                    <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
+                      <IconUser size={15} className="text-muted-foreground" />
+                      Contact Information
+                    </h3>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+                      {lead.country && (
+                        <DetailField
+                          icon={<IconMapPin size={13} />}
+                          label="Country"
+                          value={lead.country}
+                        />
+                      )}
+                      <DetailField
+                        icon={<IconUser size={13} />}
+                        label="Added By"
+                        value={lead.sent_by_name ?? "Unknown"}
+                      />
+                      {lead.email && (
+                        <DetailField
+                          icon={<IconMail size={13} />}
+                          label="Email"
+                          value={lead.email}
+                        />
+                      )}
+                      {lead.phone && (
+                        <DetailField
+                          icon={<IconPhone size={13} />}
+                          label="Phone"
+                          value={lead.phone}
+                        />
+                      )}
+                      {lead.profile_url && (
+                        <div className="col-span-2">
+                          <p className="text-xs text-muted-foreground mb-0.5 flex items-center gap-1">
+                            <IconLink size={12} />
+                            Profile URL
+                          </p>
+                          <a
+                            href={lead.profile_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-blue-600 hover:underline flex items-center gap-1 font-medium"
+                          >
+                            {lead.profile_url.length > 55
+                              ? lead.profile_url.slice(0, 55) + "..."
+                              : lead.profile_url}
+                            <IconExternalLink size={13} />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Project Details */}
+                  {(lead.project_title ||
+                    lead.service_category ||
+                    lead.requirements ||
+                    lead.challenges ||
+                    lead.expected_timeline) && (
+                    <>
+                      <div className="border-t" />
+                      <section>
+                        <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
+                          <IconBriefcase
+                            size={15}
+                            className="text-muted-foreground"
+                          />
+                          Project Details
+                        </h3>
+                        <div className="space-y-3">
+                          {(lead.service_category ||
+                            lead.expected_timeline) && (
+                            <div className="grid grid-cols-2 gap-x-6">
+                              {lead.service_category && (
+                                <DetailField
+                                  label="Service Category"
+                                  value={lead.service_category.replace(
+                                    /_/g,
+                                    " ",
+                                  )}
+                                />
+                              )}
+                              {lead.expected_timeline && (
+                                <DetailField
+                                  icon={<IconClock size={13} />}
+                                  label="Expected Timeline"
+                                  value={lead.expected_timeline}
+                                />
+                              )}
+                            </div>
+                          )}
+                          {lead.requirements && (
+                            <div>
+                              <p className="text-xs text-muted-foreground mb-1">
+                                Requirements
+                              </p>
+                              <p className="text-sm bg-muted/40 rounded-md px-3 py-2 whitespace-pre-wrap leading-relaxed">
+                                {lead.requirements}
+                              </p>
+                            </div>
+                          )}
+                          {lead.challenges && (
+                            <div>
+                              <p className="text-xs text-muted-foreground mb-1">
+                                Challenges
+                              </p>
+                              <p className="text-sm bg-muted/40 rounded-md px-3 py-2 whitespace-pre-wrap leading-relaxed">
+                                {lead.challenges}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </section>
+                    </>
+                  )}
+
+                  {/* Notes */}
+                  {lead.notes && (
+                    <>
+                      <div className="border-t" />
+                      <section>
+                        <h3 className="text-sm font-semibold mb-2">Notes</h3>
+                        <p className="text-sm text-muted-foreground bg-muted/40 rounded-md px-3 py-2 whitespace-pre-wrap leading-relaxed">
+                          {lead.notes}
+                        </p>
+                      </section>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* ════ FOLLOW-UPS TAB ════ */}
+              {activeTab === "followups" && (
+                <div className="p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold">Follow-ups</h3>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs gap-1"
+                      onClick={() => setFuOpen((o) => !o)}
+                    >
+                      <IconPlus size={14} />
+                      Add Follow-up
+                    </Button>
+                  </div>
+
+                  {fuOpen && (
+                    <div className="border rounded-lg p-4 space-y-3 bg-muted/20">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs mb-1.5 block">Date *</Label>
+                          <Input
+                            type="date"
+                            className="h-8 text-sm"
+                            value={fuForm.followup_date}
+                            onChange={(e) =>
+                              setFuForm((f) => ({
+                                ...f,
+                                followup_date: e.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs mb-1.5 block">Type *</Label>
+                          <Select
+                            value={fuForm.followup_type}
+                            onValueChange={(v) =>
+                              setFuForm((f) => ({ ...f, followup_type: v }))
+                            }
+                          >
+                            <SelectTrigger className="h-8 text-sm">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[
+                                "CALL",
+                                "EMAIL",
+                                "FIVERR",
+                                "UPWORK",
+                                "MEETING",
+                                "MESSAGE",
+                                "OTHER",
+                              ].map((t) => (
+                                <SelectItem key={t} value={t}>
+                                  {t}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div>
+                        <Label className="text-xs mb-1.5 block">
+                          Discussion Summary *
+                        </Label>
+                        <Textarea
+                          className="text-sm"
+                          rows={2}
+                          placeholder="What was discussed..."
+                          value={fuForm.discussion_summary}
+                          onChange={(e) =>
+                            setFuForm((f) => ({
+                              ...f,
+                              discussion_summary: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs mb-1.5 block">
+                          Next Action
+                        </Label>
+                        <Input
+                          className="h-8 text-sm"
+                          placeholder="Next step..."
+                          value={fuForm.next_action}
+                          onChange={(e) =>
+                            setFuForm((f) => ({
+                              ...f,
+                              next_action: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs mb-1.5 block">
+                          Next Follow-up Date
+                        </Label>
+                        <Input
+                          type="date"
+                          className="h-8 text-sm"
+                          value={fuForm.next_followup_date}
+                          onChange={(e) =>
+                            setFuForm((f) => ({
+                              ...f,
+                              next_followup_date: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="flex gap-2 justify-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setFuOpen(false)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={handleAddFollowup}
+                          disabled={fuSaving}
+                        >
+                          {fuSaving ? "Saving..." : "Save Follow-up"}
+                        </Button>
+                      </div>
+                    </div>
                   )}
 
                   {lead.followups.length === 0 ? (
-                    <div className="text-center py-12 text-muted-foreground">
-                      <IconMessages
-                        size={48}
-                        className="mx-auto mb-3 opacity-20"
-                      />
-                      <p className="text-sm">No follow-ups yet</p>
+                    <div className="text-center py-16 text-muted-foreground">
+                      <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                        <IconBriefcase size={20} className="opacity-40" />
+                      </div>
+                      <p className="text-sm font-medium">No follow-ups yet</p>
                       <p className="text-xs mt-1">
                         Add your first follow-up to track progress
                       </p>
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {lead.followups.map((fu, idx) => (
-                        <Card
+                      {lead.followups.map((fu) => (
+                        <div
                           key={fu.id}
-                          className={idx === 0 ? "border-primary/50" : ""}
+                          className="border rounded-lg p-4 space-y-2"
                         >
-                          <CardContent className="p-4 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <Badge variant="outline" className="text-xs">
-                                  {fu.followup_type}
-                                </Badge>
-                                <span className="text-sm font-medium">
-                                  {format(
-                                    new Date(fu.followup_date),
-                                    "dd MMM yyyy",
-                                  )}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-muted-foreground">
-                                  {fu.created_by_name}
-                                </span>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                  onClick={() => handleDeleteFollowup(fu.id)}
-                                >
-                                  <IconTrash size={14} />
-                                </Button>
-                              </div>
-                            </div>
-                            <p className="text-sm text-muted-foreground leading-relaxed">
-                              {fu.discussion_summary}
-                            </p>
-                            {fu.next_action && (
-                              <div className="flex items-start gap-1.5 text-xs bg-amber-50 dark:bg-amber-900/20 p-2 rounded">
-                                <IconCheck
-                                  size={14}
-                                  className="text-amber-600 dark:text-amber-400 mt-0.5 shrink-0"
-                                />
-                                <span className="text-amber-800 dark:text-amber-200">
-                                  <span className="font-semibold">Next:</span>{" "}
-                                  {fu.next_action}
-                                </span>
-                              </div>
-                            )}
-                            {fu.next_followup_date && (
-                              <div className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
-                                <IconCalendar size={14} />
-                                Next follow-up:{" "}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                                {fu.followup_type}
+                              </span>
+                              <span className="text-sm font-medium">
                                 {format(
-                                  new Date(fu.next_followup_date),
+                                  new Date(fu.followup_date),
                                   "dd MMM yyyy",
                                 )}
-                              </div>
-                            )}
-                          </CardContent>
-                        </Card>
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground">
+                                {fu.created_by_name}
+                              </span>
+                              <button
+                                onClick={() => handleDeleteFollowup(fu.id)}
+                                className="h-6 w-6 flex items-center justify-center rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors"
+                              >
+                                <IconTrash size={13} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-sm text-muted-foreground leading-relaxed">
+                            {fu.discussion_summary}
+                          </p>
+                          {fu.next_action && (
+                            <div className="flex items-start gap-1.5 text-xs bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800 px-2.5 py-1.5 rounded">
+                              <IconCheck
+                                size={13}
+                                className="text-amber-600 mt-0.5 shrink-0"
+                              />
+                              <span className="text-amber-800 dark:text-amber-200">
+                                <span className="font-semibold">Next: </span>
+                                {fu.next_action}
+                              </span>
+                            </div>
+                          )}
+                          {fu.next_followup_date && (
+                            <div className="flex items-center gap-1.5 text-xs text-blue-600">
+                              <IconCalendar size={13} />
+                              Next:{" "}
+                              {format(
+                                new Date(fu.next_followup_date),
+                                "dd MMM yyyy",
+                              )}
+                            </div>
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}
                 </div>
               )}
 
-              {/* ════════════════ ACTIVITY LOG TAB ════════════════ */}
-              {activeTab === "activity" && (
-                <div className="space-y-4">
-                  <h3 className="text-sm font-semibold">Activity Log</h3>
+              {/* ════ POST-DELIVERY TAB ════ */}
+              {activeTab === "post-delivery" && (
+                <div className="p-6 space-y-4">
+                  <LeadPostDelivery
+                    leadId={leadId}
+                    canLog={
+                      session?.user?.role === "ADMIN" ||
+                      session?.user?.role === "PROJECT_MANAGER" ||
+                      lead?.sent_by === session?.user?.id
+                    }
+                    onUpdated={() => {
+                      fetchDetail(leadId);
+                      onRefresh();
+                    }}
+                  />
+                  <LeadUpsell
+                    leadId={leadId}
+                    canLog={
+                      session?.user?.role === "ADMIN" ||
+                      session?.user?.role === "PROJECT_MANAGER" ||
+                      lead?.sent_by === session?.user?.id
+                    }
+                    onUpdated={() => {
+                      fetchDetail(leadId);
+                      onRefresh();
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* ════ TIMELINE TAB ════ */}
+              {activeTab === "timeline" && (
+                <div className="p-6">
+                  <h3 className="text-sm font-semibold mb-4">
+                    Activity Timeline
+                  </h3>
 
                   {lead.activity_logs.length === 0 ? (
-                    <div className="text-center py-12 text-muted-foreground">
-                      <IconHistory
-                        size={48}
+                    <div className="text-center py-16 text-muted-foreground">
+                      <IconClock
+                        size={32}
                         className="mx-auto mb-3 opacity-20"
                       />
                       <p className="text-sm">No activity recorded yet</p>
                     </div>
                   ) : (
-                    <div className="relative space-y-4 pl-4">
-                      {/* Timeline line */}
-                      <div className="absolute left-[19px] top-2 bottom-2 w-px bg-border" />
-
+                    <div className="space-y-3">
                       {lead.activity_logs.map((log) => {
                         let changedFields: Record<
                           string,
@@ -773,70 +1128,92 @@ export function LeadDetailSheet({
                           if (log.changes)
                             changedFields = JSON.parse(log.changes);
                         } catch {}
+                        const hasChanges =
+                          Object.keys(changedFields).filter(
+                            (f) => f !== "project_id",
+                          ).length > 0;
+                        const timeAgo = formatDistanceToNow(
+                          new Date(log.created_at),
+                          { addSuffix: true },
+                        );
 
                         return (
-                          <div key={log.id} className="relative flex gap-4">
-                            {/* Timeline dot */}
-                            <div
-                              className={`absolute left-0 top-1 h-4 w-4 rounded-full border-2 border-background shrink-0 ${ACTION_COLORS[log.action]?.includes("green") ? "bg-green-500" : ACTION_COLORS[log.action]?.includes("blue") ? "bg-blue-500" : ACTION_COLORS[log.action]?.includes("red") ? "bg-red-500" : "bg-muted-foreground"}`}
-                            />
+                          <div key={log.id} className="flex gap-3">
+                            {/* Icon */}
+                            <div className="shrink-0 mt-0.5">
+                              <div
+                                className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs ${ACTION_ICON[log.action] ?? "bg-muted-foreground"}`}
+                              >
+                                {log.action === "CREATED"
+                                  ? "✓"
+                                  : log.action === "UPDATED"
+                                    ? "✎"
+                                    : log.action === "STATUS_CHANGED"
+                                      ? "↔"
+                                      : log.action.includes("FOLLOWUP")
+                                        ? "📋"
+                                        : log.action.includes("PROJECT")
+                                          ? "🔗"
+                                          : "•"}
+                              </div>
+                            </div>
 
-                            <Card className="flex-1 ml-4">
-                              <CardContent className="p-3 space-y-2">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <Badge
-                                      variant="outline"
-                                      className={`text-[10px] ${ACTION_COLORS[log.action] ?? "bg-muted"}`}
-                                    >
-                                      {log.action.replace(/_/g, " ")}
-                                    </Badge>
-                                    <span className="text-sm font-medium">
-                                      {log.summary}
-                                    </span>
-                                  </div>
+                            {/* Content */}
+                            <div className="flex-1 min-w-0 border rounded-lg overflow-hidden">
+                              <div className="px-4 py-3">
+                                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                  <span
+                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wide ${ACTION_BADGE[log.action] ?? "bg-muted text-muted-foreground border-muted"}`}
+                                  >
+                                    {log.action.replace(/_/g, " ")}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {timeAgo}
+                                  </span>
                                 </div>
+                                <p className="text-sm font-medium leading-snug">
+                                  {log.summary}
+                                </p>
 
-                                {Object.keys(changedFields).length > 0 && (
-                                  <div className="space-y-1 mt-2 pt-2 border-t text-xs">
-                                    {Object.entries(changedFields).map(
-                                      ([field, { from, to }]) => (
+                                {hasChanges && (
+                                  <div className="mt-2 space-y-1 text-xs">
+                                    {Object.entries(changedFields)
+                                      .filter(([f]) => f !== "project_id")
+                                      .map(([field, { from, to }]) => (
                                         <div
                                           key={field}
-                                          className="flex items-center gap-2 text-muted-foreground flex-wrap"
+                                          className="flex items-center gap-2 flex-wrap"
                                         >
-                                          <span className="font-medium capitalize text-foreground">
+                                          <span className="font-medium text-foreground capitalize">
                                             {field.replace(/_/g, " ")}:
                                           </span>
-                                          <span className="line-through text-red-500/70">
+                                          <span className="text-red-500 line-through opacity-70">
                                             {String(from ?? "—")}
                                           </span>
-                                          <IconChevronRight size={12} />
+                                          <span className="text-muted-foreground">
+                                            →
+                                          </span>
                                           <span className="text-green-600 dark:text-green-400 font-medium">
                                             {String(to ?? "—")}
                                           </span>
                                         </div>
-                                      ),
-                                    )}
+                                      ))}
                                   </div>
                                 )}
 
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
-                                  <IconUser size={12} />
+                                <div className="flex items-center gap-1.5 mt-2 text-xs text-muted-foreground">
+                                  <IconUser size={11} />
                                   <span className="font-medium text-foreground">
                                     {log.performed_by_name}
                                   </span>
                                   <span>·</span>
-                                  <IconClock size={12} />
-                                  <span>
-                                    {format(
-                                      new Date(log.created_at),
-                                      "dd MMM yyyy, HH:mm",
-                                    )}
-                                  </span>
+                                  {format(
+                                    new Date(log.created_at),
+                                    "dd MMM yyyy, HH:mm",
+                                  )}
                                 </div>
-                              </CardContent>
-                            </Card>
+                              </div>
+                            </div>
                           </div>
                         );
                       })}
@@ -852,20 +1229,17 @@ export function LeadDetailSheet({
   );
 }
 
-// ─── Helper Components ────────────────────────────────────────────────────────
+// ─── Helper ───────────────────────────────────────────────────────────────────
 
-// ─── Helper Components ────────────────────────────────────────────────────────
-
-function InfoRow({
+function DetailField({
   icon,
   label,
   value,
 }: {
   icon?: React.ReactNode;
   label: string;
-  value: string | null | undefined;
+  value: string;
 }) {
-  if (!value) return null;
   return (
     <div>
       <p className="text-xs text-muted-foreground mb-0.5 flex items-center gap-1">
@@ -874,43 +1248,5 @@ function InfoRow({
       </p>
       <p className="text-sm font-medium">{value}</p>
     </div>
-  );
-}
-
-function MetricCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string | null;
-}) {
-  if (!value) return null;
-  return (
-    <div className="bg-muted/50 p-3 rounded-lg border">
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
-        {icon}
-        {label}
-      </div>
-      <p className="text-base font-bold text-foreground">{value}</p>
-    </div>
-  );
-}
-
-function IconChevronRight({ size }: { size: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="m9 18 6-6-6-6" />
-    </svg>
   );
 }

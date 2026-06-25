@@ -20,6 +20,7 @@ import {
   IconCash,
   IconTargetArrow,
   IconCreditCard,
+  IconBriefcase,
 } from "@tabler/icons-react";
 
 import { NavDocuments } from "@/components/nav-documents";
@@ -99,6 +100,12 @@ const data = {
       url: "/leads",
       icon: IconTargetArrow,
       permission: "VIEW_LEADS",
+    },
+    {
+      title: "Portfolio",
+      url: "/portfolio",
+      icon: IconBriefcase,
+      permission: "VIEW_PORTFOLIO",
     },
     {
       title: "Devices",

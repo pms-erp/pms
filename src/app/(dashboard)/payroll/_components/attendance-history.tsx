@@ -622,7 +622,6 @@ function LoadingState() {
 // ── Hook: fetch attendance + payroll for a single user ────────────────────────
 
 function useUserAttendanceWithPayroll(userId: string | null) {
-  // Derive initial loading from userId so no setState needed in effect for null case
   const [state, setState] = useState<{
     days: AttendanceDay[];
     payrollMap: Map<string, PayrollRecord>;
@@ -630,8 +629,6 @@ function useUserAttendanceWithPayroll(userId: string | null) {
     forUserId: string | null;
   }>({ days: [], payrollMap: new Map(), loading: !!userId, forUserId: userId });
 
-  // When userId changes to null, reset synchronously via derived state
-  // (computed during render, not inside an effect)
   const effectiveState =
     userId === null
       ? {
@@ -648,7 +645,7 @@ function useUserAttendanceWithPayroll(userId: string | null) {
         : state;
 
   useEffect(() => {
-    if (!userId) return; // nothing to fetch — state is reset by render logic above
+    if (!userId) return;
 
     let cancelled = false;
 
@@ -732,12 +729,19 @@ function AdminAttendanceView({ userId: _userId }: { userId: string }) {
     selectedUser === "all" ? allState.days : singleDays,
   );
 
+  // ✅ Filter out CLIENT users when loading for admin dropdown
   useEffect(() => {
     let cancelled = false;
     fetch("/api/users?active=true")
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled) setUserOptions(data.users ?? []);
+        if (!cancelled) {
+          const users: UserOption[] = data.users ?? [];
+          const filtered = users.filter(
+            (u) => u.role?.toUpperCase() !== "CLIENT",
+          );
+          setUserOptions(filtered);
+        }
       })
       .catch(() => {});
     return () => {
@@ -1020,12 +1024,19 @@ function TeamLeaderAttendanceView({ userId }: { userId: string }) {
   const [teamMembers, setTeamMembers] = useState<UserOption[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(true);
 
+  // ✅ Filter out CLIENT users when loading team members
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/users?teamOf=${userId}`)
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled) setTeamMembers(data.users ?? []);
+        if (!cancelled) {
+          const users: UserOption[] = data.users ?? [];
+          const filtered = users.filter(
+            (u) => u.role?.toUpperCase() !== "CLIENT",
+          );
+          setTeamMembers(filtered);
+        }
       })
       .catch(() => {
         if (!cancelled) setTeamMembers([]);

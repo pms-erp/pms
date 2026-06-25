@@ -54,7 +54,11 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "ADMIN")
+    if (
+      !session ||
+      (session.user.role !== "ADMIN" &&
+        session.user.role !== "ATTENDANCE_MANAGER") // ✅ Fixed
+    )
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const body = (await req.json()) as {
@@ -142,7 +146,11 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "ADMIN")
+    if (
+      !session ||
+      (session.user.role !== "ADMIN" &&
+        session.user.role !== "ATTENDANCE_MANAGER") // ✅ Fixed
+    )
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const body = (await req.json()) as {
@@ -252,7 +260,11 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "ADMIN")
+    if (
+      !session ||
+      (session.user.role !== "ADMIN" &&
+        session.user.role !== "ATTENDANCE_MANAGER") // ✅ Fixed
+    )
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const { searchParams } = new URL(req.url);

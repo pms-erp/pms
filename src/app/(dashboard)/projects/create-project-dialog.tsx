@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+// src/app/(dashboard)/projects/create-project-dialog.tsx
+// UPDATED: Added "Link to Won Lead" picker
+
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -32,6 +35,8 @@ import {
   IconLoader,
   IconCheck,
   IconAlertCircle,
+  IconSearch,
+  IconLink,
 } from "@tabler/icons-react";
 import { projectEvents } from "@/lib/events";
 import { ProjectImportButton } from "./[id]/_components/project-import-export";
@@ -43,10 +48,9 @@ type UploadedFile = {
   name: string;
   resource_type: string;
   size: number;
-  storage?: string; // ← Add this line
+  storage?: string;
 };
 
-// Track upload status per file
 type PendingFile = {
   file: File;
   id: string;
@@ -54,6 +58,15 @@ type PendingFile = {
   progress: number;
   uploadedData?: UploadedFile;
   error?: string;
+};
+
+// ── Won lead search type ──────────────────────────────────────────────────────
+type WonLead = {
+  id: string;
+  client_name: string;
+  username: string | null;
+  platform: string;
+  proposed_quote: string | null;
 };
 
 export function CreateProjectDialog() {
@@ -69,6 +82,36 @@ export function CreateProjectDialog() {
   const [fiverrOrderId, setFiverrOrderId] = useState("");
   const [status, setStatus] = useState("PLANNING");
   const [notes, setNotes] = useState("");
+
+  // ── Won lead linking state ────────────────────────────────────────────────
+  const [wonLeads, setWonLeads] = useState<WonLead[]>([]);
+  const [wonLeadsLoading, setWonLeadsLoading] = useState(false);
+  const [selectedWonLead, setSelectedWonLead] = useState<WonLead | null>(null);
+  const [leadSearch, setLeadSearch] = useState("");
+
+  // Fetch won leads when dialog opens
+  useEffect(() => {
+    if (!open) return;
+    setWonLeadsLoading(true);
+    fetch("/api/leads?status=WON&limit=50")
+      .then((r) => r.json())
+      .then((d) => setWonLeads(d.data ?? []))
+      .catch(() => {})
+      .finally(() => setWonLeadsLoading(false));
+  }, [open]);
+
+  const filteredWonLeads = wonLeads.filter(
+    (l) =>
+      !leadSearch.trim() ||
+      l.client_name.toLowerCase().includes(leadSearch.toLowerCase()) ||
+      (l.username ?? "").toLowerCase().includes(leadSearch.toLowerCase()),
+  );
+
+  // Auto-fill client name when a won lead is selected
+  const handleSelectWonLead = (lead: WonLead) => {
+    setSelectedWonLead(lead);
+    if (!clientName.trim()) setClientName(lead.client_name);
+  };
 
   function renameFile(file: File, newName: string) {
     return new File([file], newName, { type: file.type });
@@ -96,31 +139,24 @@ export function CreateProjectDialog() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  // ── Uses uploadFile utility (supports large files via R2 presign) ──────────
   const uploadSingleFile = async (file: File): Promise<PendingFile> => {
     const id = `file-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-
     const pendingFile: PendingFile = {
       file,
       id,
       status: "uploading",
       progress: 0,
     };
-
     setPendingFiles((prev) => [...prev, pendingFile]);
-
     try {
       setPendingFiles((prev) =>
         prev.map((p) => (p.id === id ? { ...p, progress: 10 } : p)),
       );
-
-      // uploadFileFn auto-picks Cloudinary (<4 MB) or R2 presigned (≥4 MB)
       const data = await uploadFileFn(file, (pct) => {
         setPendingFiles((prev) =>
           prev.map((p) => (p.id === id ? { ...p, progress: pct } : p)),
         );
       });
-
       const uploadedData: UploadedFile = {
         url: data.url,
         public_id: data.public_id,
@@ -128,7 +164,6 @@ export function CreateProjectDialog() {
         resource_type: data.resource_type,
         size: data.size,
       };
-
       setPendingFiles((prev) =>
         prev.map((p) =>
           p.id === id
@@ -136,7 +171,6 @@ export function CreateProjectDialog() {
             : p,
         ),
       );
-
       return {
         ...pendingFile,
         status: "uploaded",
@@ -157,18 +191,15 @@ export function CreateProjectDialog() {
 
   const addFiles = (incoming: File[]) => {
     const deduplicated = deduplicateFiles(incoming, pendingFiles);
-
     if (deduplicated.length === 0) {
       toast.error("File(s) already added");
       return;
     }
-
     deduplicated.forEach((file, idx) => {
       setTimeout(() => {
         uploadSingleFile(file).catch(() => {});
       }, idx * 100);
     });
-
     toast.success(
       `Uploading ${deduplicated.length} file${deduplicated.length > 1 ? "s" : ""}...`,
     );
@@ -176,30 +207,18 @@ export function CreateProjectDialog() {
 
   const removeFile = async (id: string): Promise<void> => {
     const pending = pendingFiles.find((p) => p.id === id);
-
-    // Remove from UI first (optimistic update)
     setPendingFiles((prev) => prev.filter((p) => p.id !== id));
-
-    // If already uploaded, delete from storage (non-blocking)
     if (pending?.status === "uploaded" && pending.uploadedData?.public_id) {
       try {
         await deleteFile({
           public_id: pending.uploadedData.public_id,
           resource_type: pending.uploadedData.resource_type,
-          // Cast to access optional storage property if your UploadResult includes it
-          storage: pending.uploadedData.storage, // ← No more 'as any'
+          storage: pending.uploadedData.storage,
           url: pending.uploadedData.url,
         });
         toast.success(`Removed ${pending.file.name}`);
-      } catch (err) {
-        console.warn(
-          "Failed to delete file from storage:",
-          pending.uploadedData.public_id,
-        );
-        // Don't revert UI — storage cleanup is best-effort for pending files
-        toast.error(`Could not delete ${pending.file.name} from storage`, {
-          description: "File removed from form but may still exist in storage",
-        });
+      } catch {
+        toast.error(`Could not delete ${pending.file.name} from storage`);
       }
     }
   };
@@ -213,19 +232,17 @@ export function CreateProjectDialog() {
     setNotes("");
     setPendingFiles([]);
     setIsDraggingOver(false);
+    setSelectedWonLead(null);
+    setLeadSearch("");
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-
-    const hasUploading = pendingFiles.some((p) => p.status === "uploading");
-    if (hasUploading) {
+    if (pendingFiles.some((p) => p.status === "uploading")) {
       toast.error("Please wait for files to finish uploading.");
       return;
     }
-
-    const hasErrors = pendingFiles.some((p) => p.status === "error");
-    if (hasErrors) {
+    if (pendingFiles.some((p) => p.status === "error")) {
       toast.error(
         "Some files failed to upload. Please remove them or try again.",
       );
@@ -233,12 +250,10 @@ export function CreateProjectDialog() {
     }
 
     setLoading(true);
-
     try {
       const uploadedFilesData = pendingFiles
         .filter((p) => p.status === "uploaded" && p.uploadedData)
         .map((p) => p.uploadedData!);
-
       const parsed = createProjectSchema.safeParse({
         name,
         client_name: clientName || undefined,
@@ -247,7 +262,6 @@ export function CreateProjectDialog() {
         status,
         body: notes || undefined,
       });
-
       if (!parsed.success) {
         toast.error("Validation Error", {
           description: parsed.error.issues[0].message,
@@ -257,27 +271,38 @@ export function CreateProjectDialog() {
       }
 
       const body: Record<string, unknown> = { ...parsed.data };
-      if (uploadedFilesData.length > 0) {
+      if (uploadedFilesData.length > 0)
         body.files = JSON.stringify(uploadedFilesData);
-      }
 
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-
       const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Something went wrong");
 
-      if (!res.ok) {
-        throw new Error(result.error || "Something went wrong");
+      // ── Link to won lead if selected ──────────────────────────────────────
+      if (selectedWonLead && result.id) {
+        try {
+          await fetch(`/api/leads/${selectedWonLead.id}/link-project`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              project_id: result.id,
+              notes: "Linked on project creation",
+            }),
+          });
+        } catch {
+          // Non-blocking — project already created
+          console.warn("Failed to link project to won lead");
+        }
       }
 
       toast.success("Project created", {
         description: "Your project was successfully created.",
       });
       projectEvents.triggerProjectCreated();
-
       setOpen(false);
       resetForm();
       router.refresh();
@@ -305,12 +330,97 @@ export function CreateProjectDialog() {
         <Button>Create Project</Button>
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[40vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create New Project</DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* ── Link to Won Lead ── */}
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5">
+              <IconLink className="h-3.5 w-3.5 text-muted-foreground" />
+              Link to Won Lead
+              <span className="ml-1 text-xs font-normal text-muted-foreground">
+                optional
+              </span>
+            </Label>
+
+            {selectedWonLead ? (
+              <div className="flex items-center justify-between p-2.5 border rounded-md bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700">
+                <div>
+                  <p className="text-sm font-medium">
+                    {selectedWonLead.client_name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedWonLead.platform}
+                    {selectedWonLead.username
+                      ? ` · @${selectedWonLead.username}`
+                      : ""}
+                    {selectedWonLead.proposed_quote
+                      ? ` · $${Number(selectedWonLead.proposed_quote).toLocaleString()}`
+                      : ""}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedWonLead(null)}
+                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-green-100 text-muted-foreground hover:text-foreground"
+                >
+                  <IconX className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="border rounded-md">
+                <div className="relative">
+                  <IconSearch className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    className="pl-8 h-8 text-sm border-0 border-b rounded-none rounded-t-md focus-visible:ring-0"
+                    placeholder="Search won leads..."
+                    value={leadSearch}
+                    onChange={(e) => setLeadSearch(e.target.value)}
+                  />
+                </div>
+                <div className="max-h-36 overflow-y-auto">
+                  {wonLeadsLoading ? (
+                    <div className="flex items-center gap-2 p-3 text-sm text-muted-foreground">
+                      <IconLoader className="h-3.5 w-3.5 animate-spin" />
+                      Loading won leads...
+                    </div>
+                  ) : filteredWonLeads.length === 0 ? (
+                    <p className="p-3 text-sm text-muted-foreground">
+                      {leadSearch
+                        ? "No matching won leads"
+                        : "No won leads found"}
+                    </p>
+                  ) : (
+                    filteredWonLeads.map((l) => (
+                      <button
+                        key={l.id}
+                        type="button"
+                        className="w-full text-left px-3 py-2 hover:bg-muted/60 flex items-center justify-between text-sm border-t first:border-t-0"
+                        onClick={() => handleSelectWonLead(l)}
+                      >
+                        <div>
+                          <p className="font-medium">{l.client_name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {l.platform}
+                            {l.username ? ` · @${l.username}` : ""}
+                          </p>
+                        </div>
+                        {l.proposed_quote && (
+                          <span className="text-xs font-semibold text-green-600">
+                            ${Number(l.proposed_quote).toLocaleString()}
+                          </span>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Core fields */}
           <div className="space-y-2">
             <Label>
@@ -326,7 +436,7 @@ export function CreateProjectDialog() {
 
           <div className="space-y-2">
             <Label>
-              Client Name
+              Client Name{" "}
               <span className="ml-1.5 text-xs font-normal text-muted-foreground">
                 optional
               </span>
@@ -341,7 +451,7 @@ export function CreateProjectDialog() {
           <div className="space-y-2">
             <Label className="flex items-center gap-1.5">
               <IconWorld className="h-3.5 w-3.5 text-muted-foreground" />
-              Website URL
+              Website URL{" "}
               <span className="ml-1 text-xs font-normal text-muted-foreground">
                 optional
               </span>
@@ -356,7 +466,7 @@ export function CreateProjectDialog() {
 
           <div className="space-y-2">
             <Label>
-              Fiverr Order ID
+              Fiverr Order ID{" "}
               <span className="ml-1.5 text-xs font-normal text-muted-foreground">
                 optional
               </span>
@@ -385,7 +495,7 @@ export function CreateProjectDialog() {
             </Select>
           </div>
 
-          {/* Attachments with Eager Upload UI */}
+          {/* Attachments */}
           <div className="space-y-2">
             <Label>
               Attachments
@@ -397,11 +507,7 @@ export function CreateProjectDialog() {
             </Label>
 
             <div
-              className={`border-2 border-dashed rounded-lg p-5 transition-colors outline-none ${
-                isDraggingOver
-                  ? "border-primary bg-primary/5"
-                  : "border-muted-foreground/25 hover:border-muted-foreground/50"
-              }`}
+              className={`border-2 border-dashed rounded-lg p-5 transition-colors outline-none ${isDraggingOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-muted-foreground/50"}`}
               onDragOver={(e) => {
                 e.preventDefault();
                 setIsDraggingOver(true);
@@ -450,24 +556,15 @@ export function CreateProjectDialog() {
               </label>
             </div>
 
-            {/* Pending files with upload status */}
             {pendingFiles.length > 0 && (
               <div className="space-y-1.5">
                 {pendingFiles.map((pf) => {
                   const isImage = pf.file.type.startsWith("image/");
-
                   return (
                     <div
                       key={pf.id}
-                      className={`flex items-center gap-2.5 p-2 rounded-lg border transition-colors ${
-                        pf.status === "error"
-                          ? "bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800"
-                          : pf.status === "uploaded"
-                            ? "bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-800"
-                            : "bg-muted border-transparent"
-                      }`}
+                      className={`flex items-center gap-2.5 p-2 rounded-lg border transition-colors ${pf.status === "error" ? "bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800" : pf.status === "uploaded" ? "bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-800" : "bg-muted border-transparent"}`}
                     >
-                      {/* Thumbnail or Icon with status overlay */}
                       <div className="relative h-9 w-9 shrink-0 rounded overflow-hidden border bg-muted flex items-center justify-center">
                         {isImage && pf.status !== "error" ? (
                           <img
@@ -478,8 +575,6 @@ export function CreateProjectDialog() {
                         ) : (
                           <IconPaperclip className="h-4 w-4 text-muted-foreground" />
                         )}
-
-                        {/* Status Overlay Icon */}
                         <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded">
                           {pf.status === "uploading" && (
                             <IconLoader className="h-4 w-4 text-white animate-spin" />
@@ -492,7 +587,6 @@ export function CreateProjectDialog() {
                           )}
                         </div>
                       </div>
-
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium truncate max-w-[200px]">
                           {pf.file.name}
@@ -501,7 +595,6 @@ export function CreateProjectDialog() {
                           <span className="text-[10px] text-muted-foreground">
                             {formatSize(pf.file.size)}
                           </span>
-
                           {pf.status === "uploading" && (
                             <span className="text-[10px] text-blue-600 font-medium">
                               Uploading...
@@ -513,22 +606,15 @@ export function CreateProjectDialog() {
                             </span>
                           )}
                           {pf.status === "error" && (
-                            <span
-                              className="text-[10px] text-red-600 font-medium truncate max-w-[150px]"
-                              title={pf.error}
-                            >
+                            <span className="text-[10px] text-red-600 font-medium">
                               Failed
                             </span>
                           )}
                         </div>
-
-                        {/* Progress Bar */}
                         {pf.status === "uploading" && (
                           <Progress value={pf.progress} className="h-1 mt-1" />
                         )}
                       </div>
-
-                      {/* Remove Button */}
                       {!loading && (
                         <button
                           type="button"
@@ -545,11 +631,11 @@ export function CreateProjectDialog() {
             )}
           </div>
 
-          {/* Notes / Body */}
+          {/* Notes */}
           <div className="space-y-2">
             <Label className="flex items-center gap-1.5">
               <IconAlignLeft className="h-3.5 w-3.5 text-muted-foreground" />
-              Notes
+              Notes{" "}
               <span className="ml-1 text-xs font-normal text-muted-foreground">
                 optional
               </span>
@@ -573,6 +659,8 @@ export function CreateProjectDialog() {
                 <IconLoader className="mr-2 h-4 w-4 animate-spin" />
                 Waiting for uploads...
               </>
+            ) : selectedWonLead ? (
+              `Create & Link to ${selectedWonLead.client_name}`
             ) : (
               "Create Project"
             )}

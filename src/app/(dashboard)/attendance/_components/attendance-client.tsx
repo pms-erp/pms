@@ -106,12 +106,20 @@ export function AttendanceClient({
       .slice(0, 2);
   }
 
+  // ✅ Filter out CLIENT users when loading
   useEffect(() => {
     if (!canSeeAll) return;
     setUsersLoading(true);
     fetch("/api/users?active=true")
       .then((r) => r.json())
-      .then((data) => setUserOptions(data.users ?? []))
+      .then((data) => {
+        const users: UserOption[] = data.users ?? [];
+        // Filter out CLIENT users
+        const filtered = users.filter(
+          (u) => u.role?.toUpperCase() !== "CLIENT",
+        );
+        setUserOptions(filtered);
+      })
       .catch((err) => console.error("Failed to load users", err))
       .finally(() => setUsersLoading(false));
   }, [canSeeAll]);

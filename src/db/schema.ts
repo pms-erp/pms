@@ -12,6 +12,7 @@ import {
   datetime,
   date,
   decimal,
+  json,
 } from "drizzle-orm/mysql-core";
 import { sql } from "drizzle-orm";
 
@@ -1076,6 +1077,17 @@ export const LeadActivityAction = [
   "STATUS_CHANGED",
   "FOLLOWUP_ADDED",
   "FOLLOWUP_DELETED",
+  "PROJECT_LINKED",
+  "PROJECT_UNLINKED",
+  "PROJECT_COMPLETED",
+  // Feedback + upsell lifecycle
+  "FEEDBACK_ATTEMPT_1",
+  "FEEDBACK_ATTEMPT_2",
+  "FEEDBACK_ATTEMPT_3",
+  "FEEDBACK_RECEIVED",
+  "FEEDBACK_NONE",
+  "UPSELL_IDENTIFIED",
+  "UPSELL_CONVERTED",
 ] as const;
 
 export type LeadActivityActionType = (typeof LeadActivityAction)[number];
@@ -1102,6 +1114,90 @@ export const leadActivityLogs = mysqlTable(
     leadIdx: index("lead_activity_logs_lead_idx").on(table.lead_id),
     performedByIdx: index("lead_activity_logs_performed_by_idx").on(
       table.performed_by,
+    ),
+  }),
+);
+
+export const leadProjects = mysqlTable(
+  "lead_projects",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    lead_id: varchar("lead_id", { length: 36 })
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    project_id: varchar("project_id", { length: 191 })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    linked_by: varchar("linked_by", { length: 191 })
+      .notNull()
+      .references(() => users.id),
+    notes: text("notes"),
+    is_primary: boolean("is_primary").notNull().default(false),
+    linked_at: datetime("linked_at")
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    created_at: datetime("created_at")
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (t) => ({
+    uniqueLink: unique("lead_projects_unique").on(t.lead_id, t.project_id),
+    leadIdx: index("lead_projects_lead_idx").on(t.lead_id),
+    projectIdx: index("lead_projects_project_idx").on(t.project_id),
+  }),
+);
+
+export type LeadProject = typeof leadProjects.$inferSelect;
+
+export const FeedbackStatus = ["PENDING", "RECEIVED", "NO_RESPONSE"] as const;
+export type FeedbackStatusType = (typeof FeedbackStatus)[number];
+
+export const leadClientFeedback = mysqlTable(
+  "lead_client_feedback",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    lead_id: varchar("lead_id", { length: 36 })
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    project_id: varchar("project_id", { length: 191 })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    feedback_attempt: int("feedback_attempt").notNull(), // 1 | 2 | 3
+    feedback_date: date("feedback_date"),
+    collected_by: varchar("collected_by", { length: 36 }).references(
+      () => users.id,
+    ),
+    rating: int("rating"), // 1–5, nullable
+    feedback_text: text("feedback_text"),
+    status: mysqlEnum("status", FeedbackStatus).notNull().default("PENDING"),
+    upsell_discussed: boolean("upsell_discussed").notNull().default(false),
+    upsell_notes: text("upsell_notes"),
+    upsell_service_category: mysqlEnum(
+      "upsell_service_category",
+      ServiceCategory,
+    ),
+    upsell_estimated_value: decimal("upsell_estimated_value", {
+      precision: 12,
+      scale: 2,
+    }),
+    upsell_lead_id: varchar("upsell_lead_id", { length: 36 }).references(
+      () => leads.id,
+      { onDelete: "set null" },
+    ),
+    created_at: datetime("created_at")
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updated_at: datetime("updated_at")
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (t) => ({
+    leadIdx: index("lead_client_feedback_lead_idx").on(t.lead_id),
+    projectIdx: index("lead_client_feedback_project_idx").on(t.project_id),
+    uniqueAttempt: unique("lead_client_feedback_attempt_unique").on(
+      t.lead_id,
+      t.project_id,
+      t.feedback_attempt,
     ),
   }),
 );
@@ -1181,3 +1277,106 @@ export const bills = mysqlTable(
     categoryIdx: index("bills_category_idx").on(table.category),
   }),
 );
+
+export const PortfolioSource = [
+  "PMS",
+  "FIVERR",
+  "UPWORK",
+  "DIRECT_CLIENT",
+  "REFERRAL",
+  "FACEBOOK",
+  "LINKEDIN",
+  "WEBSITE_LEAD",
+  "OTHER",
+] as const;
+
+export const PortfolioProjectType = [
+  "BUSINESS_WEBSITE",
+  "ECOMMERCE_STORE",
+  "LANDING_PAGE",
+  "PORTFOLIO_WEBSITE",
+  "CRM",
+  "ERP",
+  "SAAS",
+  "AI_APPLICATION",
+  "MOBILE_APP",
+  "WEB_APPLICATION",
+  "OTHER",
+] as const;
+
+export const PortfolioStatus = ["DRAFT", "PUBLISHED", "ARCHIVED"] as const;
+
+export const PortfolioWebsiteBuilder = [
+  "WORDPRESS",
+  "SHOPIFY",
+  "NEXTJS",
+  "REACT",
+  "GOHIGHLEVEL",
+  "WEBFLOW",
+  "WIX",
+  "CUSTOM_DEVELOPMENT",
+  "OTHER",
+] as const;
+
+export type PortfolioSourceType = (typeof PortfolioSource)[number];
+export type PortfolioProjectTypeType = (typeof PortfolioProjectType)[number];
+export type PortfolioStatusType = (typeof PortfolioStatus)[number];
+export type PortfolioWebsiteBuilderType =
+  (typeof PortfolioWebsiteBuilder)[number];
+
+// ── Main Portfolio Table ──────────────────────────────────────────────────────
+
+export const portfolio = mysqlTable("portfolio", {
+  id: varchar("id", { length: 36 }).primaryKey(),
+
+  // ── Project Identity ────────────────────────────────────────────────────────
+  project_date: date("project_date"),
+  project_id: varchar("project_id", { length: 100 }), // optional manual project ID
+  linked_project_id: varchar("linked_project_id", { length: 36 }), // FK to projects.id (optional)
+  project_name: varchar("project_name", { length: 255 }).notNull(),
+
+  // ── Client Info ─────────────────────────────────────────────────────────────
+  customer_name: varchar("customer_name", { length: 255 }),
+  business_name: varchar("business_name", { length: 255 }),
+  email: varchar("email", { length: 255 }),
+  phone: varchar("phone", { length: 50 }),
+
+  // ── Classification ──────────────────────────────────────────────────────────
+  source: mysqlEnum("source", PortfolioSource)
+    .notNull()
+    .default("DIRECT_CLIENT"),
+  project_type: mysqlEnum("project_type", PortfolioProjectType),
+  website_builder: mysqlEnum("website_builder", PortfolioWebsiteBuilder),
+  status: mysqlEnum("status", PortfolioStatus).notNull().default("DRAFT"),
+
+  // ── URLs ────────────────────────────────────────────────────────────────────
+  website_url: varchar("website_url", { length: 500 }),
+  figma_url: varchar("figma_url", { length: 500 }),
+
+  // ── Content ─────────────────────────────────────────────────────────────────
+  short_description: text("short_description"),
+
+  // ── Media — stored as JSON arrays of file paths/URLs ────────────────────────
+  // e.g. ["/uploads/portfolio/abc/featured.jpg"]
+  featured_image: varchar("featured_image", { length: 500 }),
+  gallery_images: json("gallery_images").$type<string[]>().default([]),
+  pdf_documents: json("pdf_documents").$type<string[]>().default([]),
+
+  // ── Visibility ──────────────────────────────────────────────────────────────
+  is_public: boolean("is_public").notNull().default(false),
+  is_favorite: boolean("is_favorite").notNull().default(false),
+
+  // ── Future Expansion (nullable / optional JSON blobs) ───────────────────────
+  // Intentionally left as nullable columns so future features can be added
+  // without a schema migration breaking existing records.
+  // Examples: testimonial, case_study_id, technologies (JSON), metrics (JSON)
+
+  // ── Audit ───────────────────────────────────────────────────────────────────
+  created_by: varchar("created_by", { length: 36 }).notNull(), // FK to users.id
+  created_at: datetime("created_at").notNull(),
+  updated_at: datetime("updated_at").notNull(),
+});
+
+// ── Type Inference ────────────────────────────────────────────────────────────
+export type Portfolio = typeof portfolio.$inferSelect;
+export type NewPortfolio = typeof portfolio.$inferInsert;

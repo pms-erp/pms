@@ -13,7 +13,6 @@ import {
   Loader2,
   FolderOpen,
   Eye,
-  MessageSquare,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +34,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { ProjectChatPanel } from "@/app/(dashboard)/projects/[id]/_components/project-chat-panel";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type Task = {
@@ -130,14 +130,7 @@ function ProjectStatsCards({
   ];
 
   return (
-    <div
-      className={cn(
-        "grid gap-4",
-        statusFilters.length <= 4
-          ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-          : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5",
-      )}
-    >
+    <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
       {statusFilters.map((filter) => {
         const Icon = filter.icon;
         const isActive = filter.value === currentStatus;
@@ -153,21 +146,21 @@ function ProjectStatsCards({
             )}
             onClick={() => onStatusClick(filter.value)}
           >
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <div className={cn("p-3 rounded-lg", filter.bgColor)}>
-                  <Icon className={cn("h-6 w-6", filter.iconColor)} />
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className={cn("p-2 rounded-lg shrink-0", filter.bgColor)}>
+                  <Icon className={cn("h-4 w-4", filter.iconColor)} />
                 </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-muted-foreground">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground truncate">
                     {filter.label}
                   </p>
-                  <p className="text-2xl font-bold">{filter.count}</p>
+                  <p className="text-xl font-bold">{filter.count}</p>
                 </div>
                 {isActive && (
                   <div
                     className={cn(
-                      "h-2 w-2 rounded-full",
+                      "h-2 w-2 rounded-full shrink-0",
                       filter.iconColor.replace("text-", "bg-"),
                     )}
                   />
@@ -210,21 +203,12 @@ const PRIORITY_CONFIG = {
   HIGH: { label: "High", color: "text-red-600 bg-red-50 border-red-200" },
 };
 
-function formatTime(minutes: number | null): string {
-  if (!minutes) return "—";
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h === 0) return `${m}m`;
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
-}
-
 function formatDate(date: string | Date | null): string {
   if (!date) return "—";
   const d = new Date(date);
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
   if (diffDays < 7) return `${diffDays}d ago`;
   return d.toLocaleDateString("en-US", {
     month: "short",
@@ -250,7 +234,6 @@ export default function ClientProjectDetailPage() {
       try {
         const res = await fetch(`/api/client/projects/${projectId}`);
         if (!res.ok) throw new Error("Failed to load project");
-
         const data: ProjectData = await res.json();
         setProject(data.project);
         setTasks(data.tasks || []);
@@ -261,22 +244,18 @@ export default function ClientProjectDetailPage() {
         setLoading(false);
       }
     }
-
     if (projectId) fetchData();
   }, [projectId]);
 
   // Filter tasks
   useEffect(() => {
     let filtered = [...tasks];
-
     if (currentStatus) {
       filtered = filtered.filter((t) => t.status === currentStatus);
     }
-
     if (priorityFilter !== "all") {
       filtered = filtered.filter((t) => t.priority === priorityFilter);
     }
-
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(
@@ -285,7 +264,6 @@ export default function ClientProjectDetailPage() {
           (t.assignedUserName?.toLowerCase().includes(q) ?? false),
       );
     }
-
     setFilteredTasks(filtered);
   }, [tasks, currentStatus, priorityFilter, searchQuery]);
 
@@ -363,156 +341,167 @@ export default function ClientProjectDetailPage() {
         onStatusClick={setCurrentStatus}
       />
 
-      {/* Filters */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder="Filter by priority" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Priorities</SelectItem>
-            <SelectItem value="HIGH">High</SelectItem>
-            <SelectItem value="MEDIUM">Medium</SelectItem>
-            <SelectItem value="LOW">Low</SelectItem>
-          </SelectContent>
-        </Select>
+      {/* Main content — tasks left, chat right */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6 items-start">
+        {/* Left: Filters + Tasks Table */}
+        <div className="space-y-4 min-w-0">
+          {/* Filters */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="Filter by priority" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Priorities</SelectItem>
+                <SelectItem value="HIGH">High</SelectItem>
+                <SelectItem value="MEDIUM">Medium</SelectItem>
+                <SelectItem value="LOW">Low</SelectItem>
+              </SelectContent>
+            </Select>
 
-        <div className="flex-1 max-w-sm">
-          <Input
-            placeholder="Search tasks..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full"
-          />
-        </div>
+            <div className="flex-1 max-w-sm">
+              <Input
+                placeholder="Search tasks..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full"
+              />
+            </div>
 
-        {(currentStatus || priorityFilter !== "all" || searchQuery) && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setCurrentStatus(null);
-              setPriorityFilter("all");
-              setSearchQuery("");
-            }}
-          >
-            Clear filters
-          </Button>
-        )}
-      </div>
+            {(currentStatus || priorityFilter !== "all" || searchQuery) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setCurrentStatus(null);
+                  setPriorityFilter("all");
+                  setSearchQuery("");
+                }}
+              >
+                Clear filters
+              </Button>
+            )}
+          </div>
 
-      {/* Tasks Table */}
-      <Card>
-        <div className="p-4 border-b">
-          <h2 className="text-lg font-semibold">
-            Tasks ({filteredTasks.length})
-          </h2>
-        </div>
-        <Table>
-          <TableHeader className="bg-muted">
-            <TableRow>
-              <TableHead className="font-semibold">Task</TableHead>
-              <TableHead className="font-semibold">Team</TableHead>
-              <TableHead className="font-semibold">Priority</TableHead>
-              <TableHead className="font-semibold">Status</TableHead>
-              <TableHead className="font-semibold">Assigned To</TableHead>
-              {/* <TableHead className="font-semibold">Est. Time</TableHead> */}
-              <TableHead className="font-semibold">Created</TableHead>
-              <TableHead className="w-10" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredTasks.length > 0 ? (
-              filteredTasks.map((task) => {
-                const statusCfg =
-                  STATUS_CONFIG[task.status as keyof typeof STATUS_CONFIG];
-                const priorityCfg =
-                  PRIORITY_CONFIG[
-                    task.priority as keyof typeof PRIORITY_CONFIG
-                  ];
+          {/* Tasks Table */}
+          <Card>
+            <div className="p-4 border-b">
+              <h2 className="text-lg font-semibold">
+                Tasks ({filteredTasks.length})
+              </h2>
+            </div>
+            <Table>
+              <TableHeader className="bg-muted">
+                <TableRow>
+                  <TableHead className="font-semibold">Task</TableHead>
+                  <TableHead className="font-semibold">Team</TableHead>
+                  <TableHead className="font-semibold">Priority</TableHead>
+                  <TableHead className="font-semibold">Status</TableHead>
+                  <TableHead className="font-semibold">Assigned To</TableHead>
+                  <TableHead className="font-semibold">Created</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredTasks.length > 0 ? (
+                  filteredTasks.map((task) => {
+                    const statusCfg =
+                      STATUS_CONFIG[task.status as keyof typeof STATUS_CONFIG];
+                    const priorityCfg =
+                      PRIORITY_CONFIG[
+                        task.priority as keyof typeof PRIORITY_CONFIG
+                      ];
 
-                return (
-                  <TableRow
-                    key={task.id}
-                    className={cn(
-                      "hover:bg-muted/50 transition-colors",
-                      task.status === "APPROVED" && "bg-green-50/50",
-                    )}
-                  >
-                    <TableCell className="font-medium max-w-[250px] truncate">
-                      <NextLink
-                        href={`/client/tasks/${task.id}`}
-                        className="hover:underline text-primary"
+                    return (
+                      <TableRow
+                        key={task.id}
+                        className={cn(
+                          "hover:bg-muted/50 transition-colors",
+                          task.status === "APPROVED" && "bg-green-50/50",
+                        )}
                       >
-                        {task.title}
-                      </NextLink>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {task.team_type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={cn("text-xs", priorityCfg?.color)}
-                      >
-                        {priorityCfg?.label || task.priority}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={cn("text-xs", statusCfg?.color)}
-                      >
-                        {statusCfg?.label || task.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {task.assignedUserName ? (
-                        <div className="flex items-center gap-2">
-                          <div className="h-6 w-6 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs">
-                            {task.assignedUserName.charAt(0).toUpperCase()}
-                          </div>
-                          <span className="text-sm">
-                            {task.assignedUserName}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">
-                          Unassigned
-                        </span>
-                      )}
-                    </TableCell>
-                    {/* <TableCell className="text-sm">
-                      {formatTime(task.estimated_minutes)}
-                    </TableCell> */}
-                    <TableCell className="text-sm text-muted-foreground">
-                      {formatDate(task.created_at)}
-                    </TableCell>
-                    <TableCell>
-                      <NextLink href={`/client/tasks/${task.id}`}>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                      </NextLink>
+                        <TableCell className="font-medium max-w-[220px] truncate">
+                          <NextLink
+                            href={`/client/tasks/${task.id}`}
+                            className="hover:underline text-primary"
+                          >
+                            {task.title}
+                          </NextLink>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">
+                            {task.team_type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={cn("text-xs", priorityCfg?.color)}
+                          >
+                            {priorityCfg?.label || task.priority}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={cn("text-xs", statusCfg?.color)}
+                          >
+                            {statusCfg?.label || task.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {task.assignedUserName ? (
+                            <div className="flex items-center gap-2">
+                              <div className="h-6 w-6 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs shrink-0">
+                                {task.assignedUserName.charAt(0).toUpperCase()}
+                              </div>
+                              <span className="text-sm truncate">
+                                {task.assignedUserName}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">
+                              Unassigned
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {formatDate(task.created_at)}
+                        </TableCell>
+                        <TableCell>
+                          <NextLink href={`/client/tasks/${task.id}`}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </NextLink>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                ) : (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="h-24 text-center text-muted-foreground"
+                    >
+                      No tasks found
                     </TableCell>
                   </TableRow>
-                );
-              })
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={8}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No tasks found
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Card>
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        </div>
+
+        {/* Right: Chat Panel — sticky so it stays in view while scrolling tasks */}
+        <div className="xl:sticky xl:top-6 h-[600px]">
+          <ProjectChatPanel projectId={projectId} />
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,6 +31,8 @@ import {
   IconLoader,
   IconCheck,
   IconAlertCircle,
+  IconSearch,
+  IconChevronDown,
 } from "@tabler/icons-react";
 import Link from "next/link";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
@@ -51,6 +53,8 @@ type TeamMember = {
   id: string;
   name: string;
   username: string;
+  role?: string;
+  is_active?: boolean;
 };
 
 type PendingFile = {
@@ -117,6 +121,16 @@ export function CreateTaskDialog({
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
 
+  // ✅ Search state for Project dropdown
+  const [projectSearch, setProjectSearch] = useState("");
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
+
+  // ✅ Search state for Assign To dropdown
+  const [assignSearch, setAssignSearch] = useState("");
+  const [assignDropdownOpen, setAssignDropdownOpen] = useState(false);
+  const assignDropdownRef = useRef<HTMLDivElement>(null);
+
   const [formData, setFormData] = useState<FormDataState>({
     project_id: "",
     team_type: "",
@@ -126,6 +140,46 @@ export function CreateTaskDialog({
     assigned_to: "",
     due_date: null,
   });
+
+  // ✅ Close dropdowns when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        projectDropdownRef.current &&
+        !projectDropdownRef.current.contains(event.target as Node)
+      ) {
+        setProjectDropdownOpen(false);
+      }
+      if (
+        assignDropdownRef.current &&
+        !assignDropdownRef.current.contains(event.target as Node)
+      ) {
+        setAssignDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // ✅ Filter projects based on search
+  const filteredProjects = projects.filter((p) =>
+    p.name.toLowerCase().includes(projectSearch.toLowerCase()),
+  );
+
+  // ✅ Get selected project display text
+  const selectedProject = projects.find((p) => p.id === formData.project_id);
+
+  // ✅ Filter team members based on search
+  const filteredTeamMembers = teamMembers.filter((m) => {
+    const searchLower = assignSearch.toLowerCase();
+    return (
+      m.name.toLowerCase().includes(searchLower) ||
+      m.username.toLowerCase().includes(searchLower)
+    );
+  });
+
+  // ✅ Get selected member display text
+  const selectedMember = teamMembers.find((m) => m.id === formData.assigned_to);
 
   useEffect(() => {
     if (open) {
@@ -158,6 +212,10 @@ export function CreateTaskDialog({
         assigned_to: "",
         due_date: null,
       });
+      setProjectSearch("");
+      setProjectDropdownOpen(false);
+      setAssignSearch("");
+      setAssignDropdownOpen(false);
     }
   }, [open]);
 
@@ -252,8 +310,19 @@ export function CreateTaskDialog({
       const res = await fetch("/api/users?for=assignment&limit=200");
       if (!res.ok) throw new Error(`Failed to fetch users: ${res.status}`);
       const data = await res.json();
-      // The API returns { users: [...] }, not a bare array
-      setTeamMembers(Array.isArray(data?.users) ? data.users : []);
+      const list = Array.isArray(data?.users) ? data.users : [];
+
+      // Filter out:
+      // 1. Users with CLIENT or CUSTOMER role
+      // 2. Users who are inactive (is_active === false)
+      const filteredList = list.filter((user: TeamMember) => {
+        const role = user.role?.toUpperCase();
+        const isClient = role === "CLIENT" || role === "CUSTOMER";
+        const isActive = user.is_active !== false;
+        return !isClient && isActive;
+      });
+
+      setTeamMembers(filteredList);
     } catch (error) {
       console.error("Failed to fetch team members:", error);
     }
@@ -264,7 +333,7 @@ export function CreateTaskDialog({
       const res = await fetch("/api/teams");
       if (!res.ok) return;
       const data = await res.json();
-      setTeamOptions(Array.isArray(data) ? data : []); // ← this one is actually correct
+      setTeamOptions(Array.isArray(data) ? data : []);
     } catch {
       console.error("Failed to fetch teams");
     }
@@ -339,7 +408,6 @@ export function CreateTaskDialog({
       }
 
       toast.success("Task created successfully");
-      // Clear pendingFiles WITHOUT triggering storage delete (files are now saved)
       setPendingFiles([]);
       setOpen(false);
       router.refresh();
@@ -366,45 +434,103 @@ export function CreateTaskDialog({
           <DialogTitle>Create New Task</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Project */}
-          <div className="space-y-2">
+          {/* ✅ Project - Searchable Dropdown */}
+          <div className="space-y-2" ref={projectDropdownRef}>
             <Label>
               Project <span className="text-destructive">*</span>
             </Label>
-            <Select
-              value={formData.project_id}
-              onValueChange={(value) =>
-                setFormData({ ...formData, project_id: value })
-              }
-              disabled={fetchingData || projects.length === 0}
-            >
-              <SelectTrigger>
-                <SelectValue
-                  placeholder={
-                    fetchingData
-                      ? "Loading..."
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+                disabled={fetchingData}
+                className="flex w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span
+                  className={selectedProject ? "" : "text-muted-foreground"}
+                >
+                  {fetchingData
+                    ? "Loading…"
+                    : selectedProject
+                      ? selectedProject.name
                       : projects.length === 0
                         ? "No projects available"
-                        : "Select a project"
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {projects.map((project) => (
-                  <SelectItem key={project.id} value={project.id}>
-                    {project.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {projects.length === 0 && !fetchingData && (
-              <p className="text-sm text-muted-foreground">
-                No projects found.{" "}
-                <Link href="/projects" className="text-primary hover:underline">
-                  Create one
-                </Link>
-              </p>
-            )}
+                        : "Search and select a project"}
+                </span>
+                <IconChevronDown className="h-4 w-4 opacity-50" />
+              </button>
+
+              {projectDropdownOpen && (
+                <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md">
+                  {/* Search Input */}
+                  <div className="flex items-center border-b px-3">
+                    <IconSearch className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+                    <input
+                      type="text"
+                      placeholder="Search projects…"
+                      value={projectSearch}
+                      onChange={(e) => setProjectSearch(e.target.value)}
+                      className="flex h-9 w-full rounded-md bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      autoFocus
+                    />
+                    {projectSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setProjectSearch("")}
+                        className="ml-2 rounded-sm opacity-70 hover:opacity-100"
+                      >
+                        <IconX className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Options List */}
+                  <div className="max-h-[200px] overflow-y-auto p-1">
+                    {filteredProjects.length === 0 ? (
+                      <div className="py-6 text-center">
+                        <p className="text-sm text-muted-foreground">
+                          No projects found.
+                        </p>
+                        {!projectSearch && !fetchingData && (
+                          <Link
+                            href="/projects"
+                            className="text-xs text-primary hover:underline mt-1 inline-block"
+                          >
+                            Create one
+                          </Link>
+                        )}
+                      </div>
+                    ) : (
+                      filteredProjects.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setFormData({ ...formData, project_id: p.id });
+                            setProjectDropdownOpen(false);
+                            setProjectSearch("");
+                          }}
+                          className={`relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 px-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground ${
+                            formData.project_id === p.id
+                              ? "bg-accent text-accent-foreground"
+                              : ""
+                          }`}
+                        >
+                          <IconCheck
+                            className={`mr-2 h-4 w-4 ${
+                              formData.project_id === p.id
+                                ? "opacity-100"
+                                : "opacity-0"
+                            }`}
+                          />
+                          {p.name}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Team Type */}
@@ -520,28 +646,89 @@ export function CreateTaskDialog({
             )}
           </div>
 
-          {/* Assign To */}
-          <div className="space-y-2">
+          {/* ✅ Assign To - Searchable Dropdown */}
+          <div className="space-y-2" ref={assignDropdownRef}>
             <Label>
               Assign To <span className="text-destructive">*</span>
             </Label>
-            <Select
-              value={formData.assigned_to}
-              onValueChange={(value) =>
-                setFormData({ ...formData, assigned_to: value })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select team member" />
-              </SelectTrigger>
-              <SelectContent>
-                {teamMembers.map((member) => (
-                  <SelectItem key={member.id} value={member.id}>
-                    {member.name} (@{member.username})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setAssignDropdownOpen(!assignDropdownOpen)}
+                disabled={fetchingData}
+                className="flex w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className={selectedMember ? "" : "text-muted-foreground"}>
+                  {fetchingData
+                    ? "Loading…"
+                    : selectedMember
+                      ? `${selectedMember.name} (@${selectedMember.username})`
+                      : "Search and select team member"}
+                </span>
+                <IconChevronDown className="h-4 w-4 opacity-50" />
+              </button>
+
+              {assignDropdownOpen && (
+                <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md">
+                  {/* Search Input */}
+                  <div className="flex items-center border-b px-3">
+                    <IconSearch className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+                    <input
+                      type="text"
+                      placeholder="Search by name or username…"
+                      value={assignSearch}
+                      onChange={(e) => setAssignSearch(e.target.value)}
+                      className="flex h-9 w-full rounded-md bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      autoFocus
+                    />
+                    {assignSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setAssignSearch("")}
+                        className="ml-2 rounded-sm opacity-70 hover:opacity-100"
+                      >
+                        <IconX className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Options List */}
+                  <div className="max-h-[200px] overflow-y-auto p-1">
+                    {filteredTeamMembers.length === 0 ? (
+                      <p className="py-6 text-center text-sm text-muted-foreground">
+                        No team members found.
+                      </p>
+                    ) : (
+                      filteredTeamMembers.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setFormData({ ...formData, assigned_to: m.id });
+                            setAssignDropdownOpen(false);
+                            setAssignSearch("");
+                          }}
+                          className={`relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 px-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground ${
+                            formData.assigned_to === m.id
+                              ? "bg-accent text-accent-foreground"
+                              : ""
+                          }`}
+                        >
+                          <IconCheck
+                            className={`mr-2 h-4 w-4 ${
+                              formData.assigned_to === m.id
+                                ? "opacity-100"
+                                : "opacity-0"
+                            }`}
+                          />
+                          {m.name} (@{m.username})
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Attachments */}

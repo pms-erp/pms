@@ -493,12 +493,21 @@ export function AttendanceTable({
             url = `/api/users?active=true&teamLeaderId=${teamLeaderId}`;
           const res = await fetch(url);
           const data = await res.json();
-          setAllUsers(data.users ?? []);
+          // ✅ Filter out CLIENT users
+          const users = (data.users ?? []).filter(
+            (u: UserOption) => u.role?.toUpperCase() !== "CLIENT",
+          );
+          setAllUsers(users);
         } else if (userId) {
           const res = await fetch(`/api/users/${userId}`);
           if (res.ok) {
             const data = await res.json();
-            if (data.user) setAllUsers([data.user]);
+            // ✅ Filter out CLIENT users
+            if (data.user && data.user.role?.toUpperCase() !== "CLIENT") {
+              setAllUsers([data.user]);
+            } else {
+              setAllUsers([]);
+            }
           }
         }
       } catch (err) {
@@ -523,7 +532,11 @@ export function AttendanceTable({
     try {
       const res = await fetch("/api/users?active=true");
       const data = await res.json();
-      setAllUsers(data.users ?? []);
+      // ✅ Filter out CLIENT users
+      const users = (data.users ?? []).filter(
+        (u: UserOption) => u.role?.toUpperCase() !== "CLIENT",
+      );
+      setAllUsers(users);
     } catch {
       toast.error("Failed to load users");
     } finally {
